@@ -113,12 +113,11 @@
       <input type="range" id="w_econ" min="0" max="100" value="70">
     </div>
     <div class="slider">
-      <label><span>Comfort priority</span><b id="v_comf"></b></label>
+      <label><span>Crew transit</span><b id="v_comf"></b><span>Owner aboard</span></label>
       <input type="range" id="w_comf" min="0" max="100" value="30">
     </div>
-    <div class="slider">
-      <label><span>Machinery care</span><b id="v_wear"></b></label>
-      <input type="range" id="w_wear" min="0" max="100" value="40">
+    <div class="conf" style="margin-top:8px; padding:7px 9px; border:1px dashed var(--line); border-radius:7px;">
+      <b style="color:var(--txt); font-weight:600;">Machinery care: vessel policy</b> — engineer-set (max continuous load, slamming avoidance), applied under every plan. Wear shown as an output on each plan.
     </div>
     <div class="conf">Twin v0 confidence: synthetic. On a real vessel these predictions carry live confidence intervals learned from telemetry.</div>
   </div>
@@ -539,12 +538,11 @@ function why(r,base,res){
 }
 function render(){
   const scId=document.getElementById("scenario").value;
-  const econ=+document.getElementById("w_econ").value, comf=+document.getElementById("w_comf").value, wear=+document.getElementById("w_wear").value;
+  const econ=+document.getElementById("w_econ").value, comf=+document.getElementById("w_comf").value;
   document.getElementById("v_econ").textContent="";
-  document.getElementById("v_comf").textContent=comf+"%";
-  document.getElementById("v_wear").textContent=wear+"%";
+  document.getElementById("v_comf").textContent="";
   const ab=document.getElementById("arriveby").value;
-  const res=optimise(scId,econ,comf,wear, ab? +ab : null);
+  const res=optimise(scId,econ,comf,WEAR_POLICY, ab? +ab : null);
   res.comfRef=Math.max(res.baseline.comfort,...res.plans.map(p=>p.comfort),1);
   const wearRef=Math.max(res.baseline.wear,...res.plans.map(p=>p.wear),1);
   window._res=res;
@@ -740,15 +738,16 @@ function answerChat(qRaw){
   return `I can explain the recommended plans or adjust the passage. Try: "Why this route?", "Fuel vs baseline?", "Where is it roughest?", "What about wear?", or give me a constraint like "arrive by 21:00".`;
 }
 function chatAsk(q){ if(!q.trim()) return; chatPush("me",q); setTimeout(()=>chatPush("ai",answerChat(q)),150); }
-const PRESETS={ owner:{econ:25,comf:90,wear:50}, repo:{econ:20,comf:10,wear:60}, charter:{econ:85,comf:40,wear:25}, delivery:{econ:45,comf:15,wear:80} };
+const WEAR_POLICY=50; // machinery-care: per-vessel policy (engineer-set in production), not a passage input
+const PRESETS={ owner:{econ:25,comf:90}, repo:{econ:20,comf:10}, charter:{econ:85,comf:40}, delivery:{econ:45,comf:15} };
 document.getElementById("presets").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b) return;
   document.querySelectorAll("#presets button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
   const p=PRESETS[b.dataset.p];
-  document.getElementById("w_econ").value=p.econ; document.getElementById("w_comf").value=p.comf; document.getElementById("w_wear").value=p.wear;
+  document.getElementById("w_econ").value=p.econ; document.getElementById("w_comf").value=p.comf;
   window._sel=0; render();
 });
-for(const id of ["scenario","arriveby","w_econ","w_comf","w_wear"]) document.getElementById(id).addEventListener("input",()=>{window._sel=0; render();});
+for(const id of ["scenario","arriveby","w_econ","w_comf"]) document.getElementById(id).addEventListener("input",()=>{window._sel=0; render();});
 document.getElementById("tscrub").addEventListener("input",render);
 document.getElementById("chatsend").addEventListener("click",()=>{const i=document.getElementById("chatin"); chatAsk(i.value); i.value="";});
 document.getElementById("chatin").addEventListener("keydown",e=>{if(e.key==="Enter"){chatAsk(e.target.value); e.target.value="";}});
