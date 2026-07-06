@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stingray — Passage & Performance Optimisation (Prototype)</title>
+<style>
+  :root{
+    --bg:#0b1420; --panel:#121f30; --panel2:#0e1927; --line:#22344c;
+    --txt:#dce8f5; --dim:#7e93ab; --acc:#35c4e7; --gold:#e7b935;
+    --good:#3ddc84; --warn:#e7b935; --bad:#ef6a5a;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--bg); color:var(--txt); font:14px/1.45 -apple-system,'Segoe UI',Helvetica,Arial,sans-serif;}
+  header{display:flex; align-items:baseline; gap:14px; padding:14px 20px; border-bottom:1px solid var(--line);}
+  header h1{font-size:19px; letter-spacing:3px; color:var(--acc); font-weight:700;}
+  header h1 .brand2{font-size:11px; letter-spacing:2px; color:var(--dim); font-weight:600;}
+  header .sub{color:var(--dim); font-size:12px;}
+  header .tag{margin-left:auto; font-size:11px; color:var(--gold); border:1px solid var(--gold); border-radius:4px; padding:2px 8px;}
+  .wrap{display:grid; grid-template-columns:300px 1fr 400px; gap:14px; padding:14px 20px; align-items:start;}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px;}
+  .card h2{font-size:11px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; margin-bottom:10px;}
+  .presets{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px;}
+  .presets button{background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:8px 6px; font-size:12px; cursor:pointer;}
+  .presets button.on{border-color:var(--acc); color:var(--acc); background:#0f2536;}
+  .slider{margin:12px 0;}
+  .slider label{display:flex; justify-content:space-between; font-size:12px; color:var(--dim); margin-bottom:4px;}
+  .slider label b{color:var(--txt); font-weight:600;}
+  input[type=range]{width:100%; accent-color:var(--acc);}
+  select{width:100%; background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:7px; font-size:13px;}
+  .route-line{font-size:13px; margin-bottom:10px; color:var(--txt);}
+  .route-line b{color:var(--gold);}
+  canvas{width:100%; border-radius:10px; border:1px solid var(--line); display:block; background:#081019;}
+  .maprow{display:flex; gap:10px; align-items:center; margin-top:8px; font-size:12px; color:var(--dim);}
+  .maprow input{flex:1;}
+  .plan{border:1px solid var(--line); border-radius:9px; padding:11px 12px; margin-bottom:10px; cursor:pointer; background:var(--panel2);}
+  .plan.sel{border-color:var(--acc); box-shadow:0 0 0 1px var(--acc);}
+  .plan h3{font-size:13px; margin-bottom:6px;}
+  .plan h3 .dot{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:7px;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:3px 10px; font-size:12px;}
+  .grid .k{color:var(--dim);}
+  .grid .v{text-align:right; font-variant-numeric:tabular-nums;}
+  .delta-good{color:var(--good);} .delta-bad{color:var(--bad);}
+  .why{font-size:11.5px; color:var(--dim); margin-top:7px; border-top:1px dashed var(--line); padding-top:6px;}
+  .baseline{font-size:11.5px; color:var(--dim); margin-top:4px;}
+  .conf{font-size:10.5px; color:var(--dim); margin-top:10px;}
+  .bar{height:5px; border-radius:3px; background:#1b2c42; overflow:hidden; margin-top:2px;}
+  .bar i{display:block; height:100%;}
+  footer{padding:8px 20px 18px; color:var(--dim); font-size:11px;}
+  .col{display:flex; flex-direction:column; gap:14px;}
+  .vtile{background:var(--panel2); border:1px solid var(--line); border-radius:9px; padding:9px 11px;}
+  .vtile .name{font-size:10.5px; letter-spacing:.4px; color:var(--dim); text-transform:uppercase;}
+  .vtile .val{font-size:17px; font-weight:650; margin:3px 0 4px; font-variant-numeric:tabular-nums;}
+  .vtile .note{font-size:10.5px; color:var(--dim); margin-top:4px; line-height:1.3;}
+  .vtile.nosensor .val{color:var(--dim); font-weight:500;}
+  .vwrap{display:grid; grid-template-columns:1fr 250px 1fr; gap:10px; align-items:center;}
+  .vside{display:flex; flex-direction:column; gap:8px;}
+  .vbottom{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px;}
+  .envlab{text-align:center; font-size:11px; color:var(--dim); margin-top:4px;}
+  /* chat */
+  .chat{display:flex; flex-direction:column; height:280px;}
+  .msgs{flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:7px; padding:4px 2px; margin-bottom:8px;}
+  .msg{max-width:86%; padding:7px 11px; border-radius:11px; font-size:12.5px; line-height:1.45;}
+  .msg.ai{background:var(--panel2); border:1px solid var(--line); align-self:flex-start; border-bottom-left-radius:3px;}
+  .msg.me{background:#0f3247; align-self:flex-end; border-bottom-right-radius:3px;}
+  .chips{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;}
+  .chips button{background:var(--panel2); color:var(--acc); border:1px solid var(--line); border-radius:20px; padding:4px 11px; font-size:11px; cursor:pointer;}
+  .chatrow{display:flex; gap:8px;}
+  .chatrow input{flex:1; background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:8px 11px; font-size:13px;}
+  .chatrow button{background:var(--acc); color:#062030; border:0; border-radius:8px; padding:8px 14px; font-weight:650; cursor:pointer;}
+  @media (max-width:1100px){ .wrap{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<header>
+  <h1>STINGRAY <span class="brand2">MARINE TECHNOLOGY</span></h1>
+  <div class="sub">Passage & Performance Optimisation through AI Innovation — prototype · advisory only</div>
+  <div class="tag">SYNTHETIC DATA</div>
+</header>
+
+<div class="wrap">
+  <!-- LEFT: mission -->
+  <div class="card">
+    <h2>Passage</h2>
+    <div class="route-line"><b>Antibes</b> → <b>Porto Cervo</b> · dep 08:00 · M/Y 50m displacement (twin engine)</div>
+    <div class="slider">
+      <label><span>Arrive by (ETA window)</span></label>
+      <select id="arriveby">
+        <option value="">No constraint</option>
+        <option value="11">19:00 today</option>
+        <option value="13">21:00 today</option>
+        <option value="16">midnight</option>
+        <option value="22">06:00 tomorrow</option>
+      </select>
+    </div>
+    <div class="slider">
+      <label><span>Weather scenario</span></label>
+      <select id="scenario">
+        <option value="mistral">Mistral — NW gale west of Corsica</option>
+        <option value="calm">Calm — light airs everywhere</option>
+        <option value="easterly">Easterly swell — lee shore east coast</option>
+      </select>
+    </div>
+    <h2 style="margin-top:16px">Mission</h2>
+    <div class="presets" id="presets">
+      <button data-p="owner">Owner aboard</button>
+      <button data-p="repo" class="on">Repositioning</button>
+      <button data-p="charter">Charter turnaround</button>
+      <button data-p="delivery">Delivery</button>
+    </div>
+    <div class="slider">
+      <label><span>Economy</span><b id="v_econ"></b><span>Schedule</span></label>
+      <input type="range" id="w_econ" min="0" max="100" value="70">
+    </div>
+    <div class="slider">
+      <label><span>Comfort priority</span><b id="v_comf"></b></label>
+      <input type="range" id="w_comf" min="0" max="100" value="30">
+    </div>
+    <div class="slider">
+      <label><span>Machinery care</span><b id="v_wear"></b></label>
+      <input type="range" id="w_wear" min="0" max="100" value="40">
+    </div>
+    <div class="conf">Twin v0 confidence: synthetic. On a real vessel these predictions carry live confidence intervals learned from telemetry.</div>
+  </div>
+
+  <!-- CENTRE: vessel state + chat -->
+  <div class="col">
+    <div class="card">
+      <h2>Vessel state — optimisation for current mission mix</h2>
+      <div id="vstate"></div>
+    </div>
+    <div class="card">
+      <h2>Ask Stingray</h2>
+      <div class="chat">
+        <div class="msgs" id="msgs"></div>
+        <div class="chips" id="chips">
+          <button data-q="Why this route?">Why this route?</button>
+          <button data-q="Fuel vs baseline?">Fuel vs baseline?</button>
+          <button data-q="Where is it roughest?">Where is it roughest?</button>
+          <button data-q="Can we arrive by 21:00?">Can we arrive by 21:00?</button>
+          <button data-q="What about wear?">What about wear?</button>
+        </div>
+        <div class="chatrow">
+          <input id="chatin" placeholder="Ask about the passage, fuel, comfort, ETA…" autocomplete="off">
+          <button id="chatsend">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: plans + chart overview -->
+  <div class="col">
+    <div class="card">
+      <h2>Recommended plans</h2>
+      <div id="plans"></div>
+      <div class="baseline" id="basecard"></div>
+    </div>
+    <div class="card">
+      <h2>Route overview — <span style="color:var(--gold)">not for navigation</span></h2>
+      <canvas id="map" width="860" height="640"></canvas>
+      <div class="maprow">
+        <span>Fcst&nbsp;+<span id="tlab">0</span>h</span>
+        <input type="range" id="tscrub" min="0" max="30" value="0">
+        <span id="poslab"></span>
+      </div>
+    </div>
+  </div>
+</div>
+<footer>Stingray Marine Technology — stingraymarinetechnology.com · prototype: vessel, chart and routing data synthetic, not for navigation. Recommendations advisory only; the captain retains full authority. © Stingray Marine Technology 2026</footer>
+
+<script src="livewx.js"></script>
+<script id="core">
+"use strict";
+/* ================= Stingray core (DOM-free) ================= */
+const D2R = Math.PI/180, NM_LAT = 60; // nm per degree latitude
+const PORTS = { antibes:{lat:43.55, lon:7.17, name:"Antibes"}, portocervo:{lat:41.13, lon:9.55, name:"Porto Cervo"} };
+const MIDLAT = 42.3, KLON = Math.cos(MIDLAT*D2R);
+function nmDist(a,b){ const dy=(b.lat-a.lat)*NM_LAT, dx=(b.lon-a.lon)*NM_LAT*KLON; return Math.hypot(dx,dy); }
+function bearing(a,b){ const dy=(b.lat-a.lat), dx=(b.lon-a.lon)*KLON; return (Math.atan2(dx,dy)/D2R+360)%360; }
+function lerp(a,b,t){ return a+(b-a)*t; }
+
+/* ---------- Synthetic weather scenarios ----------
+   field(lat,lon,tHours) -> {hs, wDir(from,deg), wSpd(kn), waveDir(from,deg)} */
+function gauss(x,c,w){ const d=(x-c)/w; return Math.exp(-d*d); }
+const SCENARIOS = {
+  mistral: (lat,lon,t)=>{
+    const decay = 0.45 + 0.55/(1+Math.exp((t-20)/5));           // gale eases after ~20h
+    const west  = gauss(lon,7.9,1.5)*gauss(lat,41.9,1.6);       // core west of Corsica
+    const lig   = 0.45*gauss(lon,8.6,1.6)*gauss(lat,43.2,0.9);  // Ligurian fetch
+    const boni  = 0.85*gauss(lon,9.05,0.45)*gauss(lat,41.32,0.22); // strait funnel
+    const lee   = (lon>9.15 && lat>41.4 && lat<43.05) ? 0.30 : 1.0; // Corsica lee
+    const hs = Math.min(4.2,(0.5 + 3.4*Math.max(west,lig,boni)*decay)*lee);
+    return { hs, wDir:315, wSpd:(8+30*Math.max(west,boni)*decay)*(lee<1?0.5:1), waveDir:315 };
+  },
+  calm: ()=>({ hs:0.5, wDir:200, wSpd:6, waveDir:220 }),
+  easterly: (lat,lon,t)=>{
+    const build = Math.min(1, 0.4+t/24);
+    const east  = gauss(lon,9.8,1.2)*gauss(lat,42.2,1.6);       // swell east of Corsica
+    const lee   = (lon<8.9 && lat>41.5 && lat<43.0) ? 0.35 : 1.0;
+    const hs = Math.min(3.2,(0.5+2.6*east*build)*lee);
+    return { hs, wDir:95, wSpd:(7+22*east*build)*(lee<1?0.6:1), waveDir:95 };
+  }
+};
+
+/* ---------- Digital twin v0 (50m displacement, twin screw) ---------- */
+const TWIN = {
+  hotelLph: 42,                    // gensets + hotel
+  calmA: 0.152,                    // propulsion L/h = A * v^3 (fits ~260L/h prop @12kn)
+  co2PerL: 2.68,
+  fuelRate(v, hs, headingDeg, waveFromDeg, oneEngine){
+    let enc = Math.abs(((headingDeg - waveFromDeg)%360+540)%360 - 180); // 0=following,180=head
+    const headF = 0.25 + 0.75*Math.pow(enc/180, 1.6);                    // head seas worst for resistance
+    const added = 1 + 0.12*Math.pow(hs,1.5)*headF*(12/Math.max(v,6));
+    let prop = this.calmA*v*v*v*added;
+    if(oneEngine) prop *= (v<=12 ? 0.94 : 1+0.12*(v-12));                // single-engine: SFOC gain low speed, overload penalty above hull-efficient band
+    return this.hotelLph + prop;
+  },
+  comfortRate(v, hs, headingDeg, waveFromDeg){
+    let enc = Math.abs(((headingDeg - waveFromDeg)%360+540)%360 - 180);
+    const beamF = 0.35 + 0.65*Math.pow(Math.sin(enc*D2R),2)*1.4 + (enc>150?0.25:0); // beam worst, head bad
+    return Math.pow(hs,1.7)*beamF*(0.5+v/22);
+  },
+  wearRate(v, hs, headingDeg, waveFromDeg, oneEngine){
+    let enc = Math.abs(((headingDeg - waveFromDeg)%360+540)%360 - 180);
+    const slam = (enc>140 && hs>1.8 && v>13) ? 3.0*(hs-1.8)*(v-13) : 0;  // slamming penalty
+    const load = Math.pow(v/17,3)*1.2;                                   // time at high load
+    return load + slam + (oneEngine?0.15:0);                             // single-engine adds hours to one shaft
+  }
+};
+
+/* ---------- Corridors (stage centrelines, offsets bounded clear of land) ---------- */
+function seg(a,b,n){ const out=[]; for(let i=0;i<=n;i++) out.push({lat:lerp(a.lat,b.lat,i/n), lon:lerp(a.lon,b.lon,i/n)}); return out; }
+function corridorWest(){ // Antibes → west Corsica offing → Bonifacio strait → S of Lavezzi/N of Maddalena → Porto Cervo
+  const A=PORTS.antibes, B={lat:42.50,lon:8.25}, C={lat:41.55,lon:8.60},
+        D={lat:41.29,lon:9.08}, D2={lat:41.26,lon:9.40}, D3={lat:41.19,lon:9.55}, E=PORTS.portocervo;
+  const pts=[...seg(A,B,5), ...seg(B,C,3).slice(1), ...seg(C,D,2).slice(1), ...seg(D,D2,2).slice(1), ...seg(D2,D3,1).slice(1), ...seg(D3,E,1).slice(1)];
+  const maxOff=pts.map((p,i)=> (p.lat<41.6||i<2||i>pts.length-3)?1:3);   // tight in strait & at ports
+  return {name:"West via Bonifacio", pts, maxOff, offNm:5, side:"W"};
+}
+function corridorEast(){ // Antibes → round Cap Corse → east Corsica lee → Porto Cervo
+  const A=PORTS.antibes, B={lat:43.10,lon:9.42}, C={lat:42.30,lon:9.80}, D={lat:41.55,lon:9.80}, E=PORTS.portocervo;
+  const pts=[...seg(A,B,5), ...seg(B,C,3).slice(1), ...seg(C,D,3).slice(1), ...seg(D,E,2).slice(1)];
+  const maxOff=pts.map((p,i)=> (i<2||i>pts.length-3)?1:2);
+  return {name:"East of Corsica", pts, maxOff, offNm:5, side:"E"};
+}
+function offsetPoint(pts,i,k,offNm){ // lateral offset k steps, perpendicular to local track
+  const a=pts[Math.max(0,i-1)], b=pts[Math.min(pts.length-1,i+1)];
+  const dy=(b.lat-a.lat), dx=(b.lon-a.lon)*KLON, L=Math.hypot(dx,dy)||1e-9;
+  const px=-dy/L, py=dx/L; // unit perpendicular (in x=lonKLON, y=lat space)
+  return { lat:pts[i].lat + (py*k*offNm)/NM_LAT, lon:pts[i].lon + (px*k*offNm)/(NM_LAT*KLON) };
+}
+
+/* ---------- Coastline polygons (shared by chart renderer and optimiser land-avoidance) ---------- */
+const LAND={
+  mainland:[
+    [43.42,6.70],[43.50,6.95],[43.55,7.01],[43.54,7.13],[43.63,7.19],[43.69,7.29],[43.72,7.35],
+    [43.75,7.42],[43.78,7.53],[43.79,7.61],[43.82,7.78],[43.88,8.03],[43.92,8.15],[44.05,8.23],
+    [44.18,8.40],[44.31,8.48],[44.39,8.77],[44.40,8.93],[44.35,9.10],[44.30,9.21],[44.25,9.38],
+    [44.16,9.65],[44.05,9.83],[44.03,9.99],[43.96,10.13],[43.88,10.15],[44.5,10.15],[44.5,6.70]],
+  corsica:[
+    [43.01,9.36],[42.92,9.34],[42.80,9.33],[42.74,9.29],[42.68,9.30],[42.73,9.21],[42.68,9.05],
+    [42.64,8.94],[42.59,8.83],[42.57,8.75],[42.51,8.66],[42.43,8.60],[42.38,8.55],[42.29,8.57],
+    [42.22,8.55],[42.13,8.60],[42.05,8.68],[41.98,8.63],[41.92,8.74],[41.88,8.70],[41.86,8.61],
+    [41.78,8.68],[41.73,8.78],[41.68,8.90],[41.62,8.85],[41.55,8.79],[41.48,8.90],[41.43,9.02],
+    [41.39,9.10],[41.39,9.16],[41.42,9.22],[41.50,9.27],[41.59,9.33],[41.70,9.40],[41.85,9.41],
+    [42.00,9.49],[42.10,9.51],[42.30,9.54],[42.50,9.53],[42.70,9.45],[42.85,9.47],[42.95,9.46]],
+  sardinia:[
+    [41.24,9.14],[41.18,9.22],[41.16,9.31],[41.13,9.41],[41.15,9.53],[41.11,9.53],[41.05,9.55],
+    [41.00,9.62],[40.95,9.55],[40.92,9.50],[40.88,9.56],[40.80,9.65],[40.75,9.68],[40.75,8.13],
+    [40.84,8.13],[40.93,8.19],[40.96,8.32],[40.92,8.48],[40.92,8.71],[40.99,8.84],[41.02,8.93],
+    [41.10,9.00],[41.17,9.06]],
+  asinara:[[41.03,8.25],[41.08,8.30],[41.12,8.33],[41.09,8.25],[41.05,8.22]],
+  maddalena:[[41.20,9.37],[41.23,9.39],[41.24,9.42],[41.215,9.435],[41.19,9.41]],
+  capraia:[[43.08,9.83],[43.06,9.86],[43.02,9.85],[43.03,9.81]],
+  elba_w:[[42.81,10.10],[42.78,10.15],[42.73,10.15],[42.74,10.08],[42.78,10.06]],
+  pianosa:[[42.36,10.08],[42.34,10.10],[42.33,10.06]]
+};
+function inLand(lat,lon){ // ray-cast point-in-polygon over all land masses
+  for(const key in LAND){ const poly=LAND[key]; let inside=false;
+    for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+      const yi=poly[i][0],xi=poly[i][1],yj=poly[j][0],xj=poly[j][1];
+      if(((yi>lat)!==(yj>lat)) && lon < (xj-xi)*(lat-yi)/(yj-yi)+xi) inside=!inside;
+    }
+    if(inside) return true; }
+  return false;
+}
+
+/* ---------- Chart no-go areas (marine reserves — advisory routing exclusions) ---------- */
+const NOGO = [
+  {name:"Réserve de Scandola",   latMin:42.30, latMax:42.42, lonMin:8.50, lonMax:8.65},
+  {name:"Îles Lavezzi reserve",  latMin:41.29, latMax:41.36, lonMin:9.21, lonMax:9.31}
+];
+function inNogo(lat,lon){ return NOGO.some(b=> lat>=b.latMin&&lat<=b.latMax&&lon>=b.lonMin&&lon<=b.lonMax); }
+
+/* ---------- Leg evaluation & DP optimiser ---------- */
+function evalLeg(p,q,v,t0,wx,oneEngine){
+  const dist=nmDist(p,q), hrs=dist/v, hdg=bearing(p,q);
+  const m={lat:(p.lat+q.lat)/2, lon:(p.lon+q.lon)/2};
+  const w=wx(m.lat,m.lon,t0+hrs/2);
+  let nogo=0, land=0; // sample leg for exclusion-zone entry and land collision
+  for(const f of [0.15,0.3,0.45,0.6,0.75,0.9]){
+    const sl=lerp(p.lat,q.lat,f), sn=lerp(p.lon,q.lon,f);
+    if(inNogo(sl,sn)) nogo=1;
+    if(inLand(sl,sn)||inLand(q.lat,q.lon)) land=1;
+  }
+  return { hrs, nogo, land,
+    fuel: TWIN.fuelRate(v,w.hs,hdg,w.waveDir,oneEngine)*hrs,
+    comfort: TWIN.comfortRate(v,w.hs,hdg,w.waveDir)*hrs,
+    wear: TWIN.wearRate(v,w.hs,hdg,w.waveDir,oneEngine)*hrs,
+    maxHs: w.hs };
+}
+function dpRoute(corr,v,wx,weights,oneEngine){
+  const N=corr.pts.length, W=weights;
+  let states=new Map(); states.set(0,{cost:0,t:0,fuel:0,comfort:0,wear:0,maxHs:0,path:[0]});
+  for(let i=1;i<N;i++){
+    const next=new Map(), K=corr.maxOff[i];
+    for(let k=-K;k<=K;k++){
+      const q=offsetPoint(corr.pts,i,k,corr.offNm);
+      let best=null;
+      for(const [pk,s] of states){
+        if(Math.abs(pk-k)>1) continue; // limit turn rate
+        const p=offsetPoint(corr.pts,i-1,pk,corr.offNm);
+        const L=evalLeg(p,q,v,s.t,wx,oneEngine);
+        const c=s.cost + W.fuel*L.fuel + W.time*L.hrs*60 + W.comfort*L.comfort*30 + W.wear*L.wear*18 + L.nogo*50000 + L.land*1e7;
+        if(!best||c<best.cost) best={cost:c,t:s.t+L.hrs,fuel:s.fuel+L.fuel,comfort:s.comfort+L.comfort,
+          wear:s.wear+L.wear,maxHs:Math.max(s.maxHs,L.maxHs),path:[...s.path,k]};
+      }
+      if(best) next.set(k,best);
+    }
+    states=next;
+  }
+  const end=states.get(0)||[...states.values()].sort((a,b)=>a.cost-b.cost)[0];
+  const track=end.path.map((k,i)=>offsetPoint(corr.pts,i,k,corr.offNm));
+  const dist=track.reduce((s,p,i)=>i?s+nmDist(track[i-1],p):0,0);
+  return {...end, track, dist, v, corr:corr.name, side:corr.side, oneEngine};
+}
+function weightsFromSliders(econ,comf,wear){ // econ: 0=economy .. 100=schedule
+  // rough €-equivalent weighting: fuel ~€1/L, schedule value up to ~€25/min
+  return { fuel:(100-econ)/100*1.0+0.15, time:econ/100*25+0.5, comfort:comf/100*1.2, wear:wear/100 };
+}
+function optimise(scId,econ,comf,wear,latestH){ // latestH: max passage hours (ETA window), null = unconstrained
+  const wx=SCENARIOS[scId], W=weightsFromSliders(econ,comf,wear);
+  const cands=[];
+  for(const corr of [corridorWest(),corridorEast()])
+    for(const v of [10,11,12,13,14,15,16,17]){
+      const one = v<=11;
+      cands.push(dpRoute(corr,v,wx,W,one));
+    }
+  const score=r=> W.fuel*r.fuel + W.time*r.t*60 + W.comfort*r.comfort*30 + W.wear*r.wear*18;
+  cands.forEach(c=>c.score=score(c));
+  let pool = latestH ? cands.filter(c=>c.t<=latestH) : cands;
+  let missedWindow = false;
+  if(!pool.length){ missedWindow=true; pool=[...cands].sort((a,b)=>a.t-b.t).slice(0,4); } // nothing feasible: show fastest options
+  pool.sort((a,b)=> missedWindow ? a.t-b.t : score(a)-score(b));
+  const picks=[pool[0]];
+  for(const c of pool){ if(picks.length>=3) break;
+    if(picks.every(p=>p.side!==c.side||Math.abs(p.v-c.v)>=2)) picks.push(c); }
+  const baseline=dpRoute0(corridorWest(),14,wx); // do-nothing: centreline via Bonifacio @14kn
+  return {plans:picks, baseline, weights:W, missedWindow, latestH, cands};
+}
+
+/* ---------- Live weather field (from ingestion layer, see prototype/ingest/) ---------- */
+function makeLiveScenario(D){
+  const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+  const at=(arr,ti,iy,ix)=>arr[ti][iy][ix];
+  return (lat,lon,t)=>{
+    const ti=clamp(Math.round(t),0,D.hours.length-1);
+    const fy=clamp((lat-D.lat0)/D.dlat,0,D.nlat-1.001), fx=clamp((lon-D.lon0)/D.dlon,0,D.nlon-1.001);
+    const y0=Math.floor(fy), x0=Math.floor(fx), wy=fy-y0, wx_=fx-x0;
+    const bi=A=> at(A,ti,y0,x0)*(1-wy)*(1-wx_) + at(A,ti,y0+1,x0)*wy*(1-wx_)
+               + at(A,ti,y0,x0+1)*(1-wy)*wx_   + at(A,ti,y0+1,x0+1)*wy*wx_;
+    return { hs:bi(D.hs), wSpd:bi(D.wspd),
+      wDir: at(D.wdir,ti,Math.round(fy),Math.round(fx)),      // nearest for circular quantities
+      waveDir: at(D.wavedir,ti,Math.round(fy),Math.round(fx)) };
+  };
+}
+function dpRoute0(corr,v,wx){ // no micro-routing — straight down the centreline
+  let t=0,fuel=0,comfort=0,wearAcc=0,maxHs=0; const track=corr.pts;
+  for(let i=1;i<track.length;i++){ const L=evalLeg(track[i-1],track[i],v,t,wx,false);
+    t+=L.hrs; fuel+=L.fuel; comfort+=L.comfort; wearAcc+=L.wear; maxHs=Math.max(maxHs,L.maxHs); }
+  const dist=track.reduce((s,p,i)=>i?s+nmDist(track[i-1],p):0,0);
+  return {t,fuel,comfort,wear:wearAcc,maxHs,track,dist,v,corr:corr.name,side:corr.side,oneEngine:false};
+}
+/* comfort/wear 0-10 display scale */
+function idx10(x,ref){ return Math.min(10, 10*x/ref); }
+if (typeof module!=="undefined") module.exports={optimise,SCENARIOS,TWIN,corridorWest,corridorEast,PORTS,nmDist,NOGO,inNogo,makeLiveScenario,LAND,inLand};
+</script>
+
+<script>
+/* ================= UI ================= */
+const MAP={latMin:40.75, latMax:44.0, lonMin:6.7, lonMax:10.15};
+const cv=document.getElementById("map"), ctx=cv.getContext("2d");
+const X=lon=>(lon-MAP.lonMin)/(MAP.lonMax-MAP.lonMin)*cv.width;
+const Y=lat=>cv.height-(lat-MAP.latMin)/(MAP.latMax-MAP.latMin)*cv.height;
+
+/* Coastlines: LAND is defined in the core script (shared with the optimiser's land-avoidance). */
+/* ---------- Chart layer: bathymetry, soundings, TSS, reserves ---------- */
+let _bathy=null;
+function distToLandNm(lat,lon){
+  const px=lon*NM_LAT*KLON, py=lat*NM_LAT; let best=1e9;
+  for(const key in LAND){ const poly=LAND[key];
+    for(let i=0;i<poly.length;i++){
+      const a=poly[i], b=poly[(i+1)%poly.length];
+      const ax=a[1]*NM_LAT*KLON, ay=a[0]*NM_LAT, bx=b[1]*NM_LAT*KLON, by=b[0]*NM_LAT;
+      const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy||1e-9;
+      let u=((px-ax)*dx+(py-ay)*dy)/L2; u=Math.max(0,Math.min(1,u));
+      best=Math.min(best, Math.hypot(px-(ax+dx*u), py-(ay+dy*u)));
+    } }
+  return best;
+}
+function depthAt(lat,lon){
+  // shelf slope from coast, capped by regional basin depths (approximates real western-Med bathymetry)
+  const shelf=Math.pow(distToLandNm(lat,lon),1.25)*95;
+  let cap=2600;                                                    // Ligurian / Algéro-Provençal basins
+  if(lat>41.15&&lat<41.55&&lon>8.80&&lon<9.80) cap=110;            // Strait of Bonifacio sill
+  else if(lat>42.4&&lon>9.4) cap=480;                              // Corsican channel / Tuscan shelf
+  else if(lat<=42.4&&lon>9.6) cap=1250;                            // north Tyrrhenian
+  return Math.min(cap, Math.max(12, shelf));
+}
+function buildBathy(){
+  _bathy=document.createElement("canvas"); _bathy.width=cv.width; _bathy.height=cv.height;
+  const b=_bathy.getContext("2d"), step=6;
+  // ECDIS day-palette depth bands
+  const bands=[[20,"#7FB8DC"],[50,"#93C6E4"],[100,"#A9D2EA"],[200,"#C0DFF1"],[500,"#D4EAF6"],[1000,"#E2F1FA"],[9999,"#EDF6FC"]];
+  for(let px=0;px<cv.width;px+=step) for(let py=0;py<cv.height;py+=step){
+    const lon=MAP.lonMin+px/cv.width*(MAP.lonMax-MAP.lonMin);
+    const lat=MAP.latMin+(cv.height-py)/cv.height*(MAP.latMax-MAP.latMin);
+    const d=depthAt(lat,lon);
+    b.fillStyle=bands.find(x=>d<x[0])[1]; b.fillRect(px,py,step,step);
+  }
+  // spot soundings (ENC style: italic, blue-grey)
+  b.font="italic 10px sans-serif"; b.fillStyle="#4a7396";
+  for(const [la,lo] of [[43.2,7.7],[42.7,7.4],[41.9,7.9],[43.45,8.5],[43.35,9.55],[42.55,9.85],[41.75,9.95],[41.33,9.35],[42.3,8.1],[43.7,8.9],[41.0,9.15]]){
+    b.fillText(Math.round(depthAt(la,lo)/10)*10, X(lo), Y(la));
+  }
+  b.font="italic 9px sans-serif"; b.fillStyle="#7a95ab";
+  b.fillText("Depths in metres · synthetic ENC — NOT FOR NAVIGATION", 12, cv.height-10);
+}
+function drawChartOverlays(){
+  // TSS — Strait of Bonifacio (schematic)
+  ctx.save();
+  const y1=Y(41.345), y2=Y(41.305), x1=X(8.88), x2=X(9.34);
+  ctx.strokeStyle="rgba(196,0,196,.7)"; ctx.lineWidth=1; ctx.setLineDash([6,4]);
+  for(const y of [Y(41.365),Y(41.325),Y(41.285)]){ ctx.beginPath(); ctx.moveTo(x1,y); ctx.lineTo(x2,y); ctx.stroke(); }
+  ctx.setLineDash([]); ctx.fillStyle="rgba(196,0,196,.8)";
+  const arrow=(y,dir)=>{ const xm=(x1+x2)/2; ctx.beginPath();
+    ctx.moveTo(xm-14*dir,y-3); ctx.lineTo(xm+10*dir,y-3); ctx.lineTo(xm+10*dir,y-6); ctx.lineTo(xm+18*dir,y);
+    ctx.lineTo(xm+10*dir,y+6); ctx.lineTo(xm+10*dir,y+3); ctx.lineTo(xm-14*dir,y+3); ctx.closePath(); ctx.fill(); };
+  arrow(y1,1); arrow(y2,-1);
+  ctx.font="10px sans-serif"; ctx.fillText("TSS Bonifacio", x1, Y(41.375)-4);
+  // reserves / routing exclusion zones
+  for(const b of NOGO){
+    const rx=X(b.lonMin), ry=Y(b.latMax), rw=X(b.lonMax)-rx, rh=Y(b.latMin)-ry;
+    ctx.strokeStyle="rgba(20,130,70,.85)"; ctx.lineWidth=1.2; ctx.strokeRect(rx,ry,rw,rh);
+    ctx.save(); ctx.beginPath(); ctx.rect(rx,ry,rw,rh); ctx.clip();
+    ctx.strokeStyle="rgba(20,130,70,.35)";
+    for(let x=rx-rh;x<rx+rw;x+=7){ ctx.beginPath(); ctx.moveTo(x,ry+rh); ctx.lineTo(x+rh,ry); ctx.stroke(); }
+    ctx.restore();
+    ctx.fillStyle="rgba(15,110,60,.95)"; ctx.font="9.5px sans-serif";
+    ctx.fillText(b.name+" — no-go", rx, ry-4);
+  }
+  // lights (magenta flare, ENC style)
+  ctx.font="10px sans-serif";
+  for(const [la,lo] of [[43.02,9.36],[41.37,9.16],[42.24,8.54],[41.15,9.53]]){
+    ctx.fillStyle="#111"; ctx.beginPath(); ctx.arc(X(lo),Y(la),2,0,7); ctx.fill();
+    ctx.fillStyle="rgba(196,0,196,.75)"; ctx.beginPath();
+    ctx.moveTo(X(lo),Y(la)); ctx.lineTo(X(lo)+9,Y(la)-4); ctx.lineTo(X(lo)+9,Y(la)+4); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawWx(scId,t){
+  if(!_bathy) buildBathy();
+  ctx.drawImage(_bathy,0,0);
+  const wx=SCENARIOS[scId], step=10;
+  for(let px=0;px<cv.width;px+=step) for(let py=0;py<cv.height;py+=step){
+    const lon=MAP.lonMin+px/cv.width*(MAP.lonMax-MAP.lonMin);
+    const lat=MAP.latMin+(cv.height-py)/cv.height*(MAP.latMax-MAP.latMin);
+    const h=wx(lat,lon,t).hs;
+    if(h<0.35) continue;                       // keep calm water as clean chart
+    const u=Math.min(1,h/4);
+    ctx.fillStyle=`rgba(${Math.round(30+225*u)},${Math.round(140-80*u)},${Math.round(220-160*u)},${(0.10+0.42*u).toFixed(2)})`;
+    ctx.fillRect(px,py,step,step);
+  }
+  // wind arrows
+  ctx.strokeStyle="rgba(40,70,100,.55)"; ctx.lineWidth=1;
+  for(let lon=MAP.lonMin+.25; lon<MAP.lonMax; lon+=.55) for(let lat=MAP.latMin+.25; lat<MAP.latMax; lat+=.42){
+    const w=wx(lat,lon,t); const a=(w.wDir+180)*Math.PI/180, L=3+w.wSpd*.45;
+    const x=X(lon), y=Y(lat), dx=Math.sin(a)*L, dy=-Math.cos(a)*L;
+    ctx.beginPath(); ctx.moveTo(x-dx/2,y-dy/2); ctx.lineTo(x+dx/2,y+dy/2);
+    ctx.moveTo(x+dx/2,y+dy/2); ctx.lineTo(x+dx/2-dx*.3+dy*.2, y+dy/2-dy*.3-dx*.2); ctx.stroke();
+  }
+}
+function drawLand(){
+  for(const key in LAND){ const poly=LAND[key];
+    ctx.beginPath(); poly.forEach((p,i)=> i?ctx.lineTo(X(p[1]),Y(p[0])):ctx.moveTo(X(p[1]),Y(p[0])));
+    ctx.closePath(); ctx.fillStyle="#E8D8A6"; ctx.fill(); ctx.strokeStyle="#8a7a4a"; ctx.lineWidth=1.3; ctx.stroke(); }
+  ctx.fillStyle="#6d5f35"; ctx.font="italic 10px sans-serif";
+  ctx.fillText("CORSE", X(9.02), Y(42.25)); ctx.fillText("SARDEGNA", X(8.85), Y(40.87));
+  ctx.fillText("LIGURIA", X(8.55), Y(44.32)); ctx.fillText("Capraia", X(9.72), Y(43.13));
+}
+const COLORS=["#0b66c3","#0a8f4e","#c25e00"]; // saturated for light chart; still legible as dots on dark cards
+function drawRoutes(res,selIdx,t){
+  // baseline
+  ctx.setLineDash([5,5]); ctx.strokeStyle="rgba(70,90,110,.85)"; ctx.lineWidth=1.5;
+  ctx.beginPath(); res.baseline.track.forEach((p,i)=> i?ctx.lineTo(X(p.lon),Y(p.lat)):ctx.moveTo(X(p.lon),Y(p.lat))); ctx.stroke();
+  ctx.setLineDash([]);
+  res.plans.forEach((r,i)=>{
+    ctx.strokeStyle=COLORS[i]; ctx.lineWidth=i===selIdx?3.5:1.6; ctx.globalAlpha=i===selIdx?1:.75;
+    ctx.beginPath(); r.track.forEach((p,j)=> j?ctx.lineTo(X(p.lon),Y(p.lat)):ctx.moveTo(X(p.lon),Y(p.lat))); ctx.stroke();
+    ctx.globalAlpha=1;
+  });
+  // vessel position on selected plan at time t
+  const r=res.plans[selIdx]; let rem=t*r.v, pos=r.track[0];
+  for(let i=1;i<r.track.length&&rem>0;i++){ const d=nmDist(r.track[i-1],r.track[i]);
+    if(rem<=d){ const f=rem/d; pos={lat:r.track[i-1].lat+(r.track[i].lat-r.track[i-1].lat)*f, lon:r.track[i-1].lon+(r.track[i].lon-r.track[i-1].lon)*f}; rem=0;}
+    else { rem-=d; pos=r.track[i]; } }
+  if(t>0 && t<r.t+.5){ ctx.fillStyle="#111"; ctx.beginPath(); ctx.arc(X(pos.lon),Y(pos.lat),5,0,7); ctx.fill();
+    ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke(); }
+  // ports
+  for(const p of [PORTS.antibes,PORTS.portocervo]){
+    ctx.fillStyle="#a3242a"; ctx.beginPath();
+    ctx.moveTo(X(p.lon),Y(p.lat)-5); ctx.lineTo(X(p.lon)+5,Y(p.lat)); ctx.lineTo(X(p.lon),Y(p.lat)+5); ctx.lineTo(X(p.lon)-5,Y(p.lat)); ctx.closePath(); ctx.fill();
+    ctx.fillStyle="#1c3550"; ctx.font="bold 11px sans-serif"; ctx.fillText(p.name, X(p.lon)+8, Y(p.lat)+4);
+  }
+}
+function fmtH(h){ const H=Math.floor(h), M=Math.round((h-H)*60); return `${H}h${String(M).padStart(2,"0")}`; }
+function eta(h){ const dep=8*60, m=(dep+h*60)%1440, d=Math.floor((dep+h*60)/1440);
+  return `${String(Math.floor(m/60)).padStart(2,"0")}:${String(Math.round(m%60)).padStart(2,"0")}${d?" +1d":""}`; }
+function why(r,base,res){
+  const parts=[];
+  if(r.side==="E"&&base.maxHs>2) parts.push(`routes east of Corsica to keep ${base.maxHs.toFixed(1)}m seas in the lee`);
+  if(r.side==="W"&&r.maxHs<1.5) parts.push("takes the direct strait route in light conditions");
+  if(r.side==="W"&&r.maxHs>=1.5) parts.push(`accepts ${r.maxHs.toFixed(1)}m max seas via Bonifacio for the shorter track`);
+  if(r.v<=11) parts.push(`single-engine at ${r.v}kn in the efficient band`);
+  if(r.fuel<base.fuel) parts.push(`saves ${Math.round(base.fuel-r.fuel)}L vs baseline`);
+  if(r.t<base.t) parts.push(`arrives ${fmtH(base.t-r.t)} earlier`);
+  if(idx10(r.comfort,res.comfRef)<idx10(base.comfort,res.comfRef)*.6) parts.push("markedly lower motion dose");
+  return parts.length?parts.join("; ")+".":"balanced trade-off across objectives.";
+}
+function render(){
+  const scId=document.getElementById("scenario").value;
+  const econ=+document.getElementById("w_econ").value, comf=+document.getElementById("w_comf").value, wear=+document.getElementById("w_wear").value;
+  document.getElementById("v_econ").textContent="";
+  document.getElementById("v_comf").textContent=comf+"%";
+  document.getElementById("v_wear").textContent=wear+"%";
+  const ab=document.getElementById("arriveby").value;
+  const res=optimise(scId,econ,comf,wear, ab? +ab : null);
+  res.comfRef=Math.max(res.baseline.comfort,...res.plans.map(p=>p.comfort),1);
+  const wearRef=Math.max(res.baseline.wear,...res.plans.map(p=>p.wear),1);
+  window._res=res;
+  const t=+document.getElementById("tscrub").value;
+  document.getElementById("tlab").textContent=t;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  drawWx(scId,t); drawLand(); drawChartOverlays(); drawRoutes(res,window._sel||0,t);
+  const B=res.baseline, wrap=document.getElementById("plans"); wrap.innerHTML="";
+  if(res.missedWindow){
+    const warn=document.createElement("div");
+    warn.style.cssText="border:1px solid var(--bad);color:var(--bad);border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:10px";
+    warn.textContent="No plan meets the requested ETA window in this weather — showing fastest feasible passages. Consider an earlier departure.";
+    wrap.appendChild(warn);
+  }
+  res.plans.forEach((r,i)=>{
+    const dF=r.fuel-B.fuel, dT=r.t-B.t, co2=r.fuel*TWIN.co2PerL;
+    const cI=idx10(r.comfort,res.comfRef), wI=idx10(r.wear,wearRef);
+    const el=document.createElement("div"); el.className="plan"+((window._sel||0)===i?" sel":"");
+    el.innerHTML=`<h3><span class="dot" style="background:${COLORS[i]}"></span>${"ABC"[i]} — ${r.corr} · ${r.v} kn ${r.oneEngine?"· single engine":""}</h3>
+      <div class="grid">
+        <span class="k">Fuel</span><span class="v">${Math.round(r.fuel).toLocaleString()} L <span class="${dF<=0?"delta-good":"delta-bad"}">(${dF>0?"+":""}${Math.round(dF)})</span></span>
+        <span class="k">CO₂</span><span class="v">${(co2/1000).toFixed(1)} t</span>
+        <span class="k">Passage</span><span class="v">${fmtH(r.t)} · ETA ${eta(r.t)} <span class="${dT<=0?"delta-good":"delta-bad"}">(${dT>0?"+":""}${fmtH(Math.abs(dT))})</span></span>
+        <span class="k">Distance</span><span class="v">${Math.round(r.dist)} nm</span>
+        <span class="k">Comfort (motion dose)</span><span class="v">${cI.toFixed(1)}/10</span>
+        <span class="k"></span><span class="v"><span class="bar"><i style="width:${cI*10}%;background:${cI<4?"var(--good)":cI<7?"var(--warn)":"var(--bad)"}"></i></span></span>
+        <span class="k">Wear index</span><span class="v">${wI.toFixed(1)}/10</span>
+        <span class="k">Max seas</span><span class="v">${r.maxHs.toFixed(1)} m</span>
+        ${res.latestH?`<span class="k">ETA window</span><span class="v ${r.t<=res.latestH?"delta-good":"delta-bad"}">${r.t<=res.latestH?"✓ meets":"✗ misses"} ${eta(res.latestH)}</span>`:""}
+      </div>
+      <div class="why">${why(r,B,res)}</div>`;
+    el.onclick=()=>{window._sel=i; render();};
+    wrap.appendChild(el);
+  });
+  document.getElementById("basecard").innerHTML=
+    `<b>Do-nothing baseline</b> (direct via Bonifacio, 14 kn, no routing): ${Math.round(B.fuel).toLocaleString()} L · ${fmtH(B.t)} · max seas ${B.maxHs.toFixed(1)} m`;
+  renderVessel(res, scId, t);
+  document.querySelector("header .tag").textContent = scId==="live" ? "LIVE WEATHER · SYNTHETIC VESSEL" : "SYNTHETIC DATA";
+  document.getElementById("poslab").textContent="";
+  // proactive chat suggestion when the recommendation changes
+  const sig=res.plans[0].side+res.plans[0].v+"|"+scId+"|"+(res.latestH||"");
+  if(window._lastSig!==sig){
+    window._lastSig=sig;
+    const p=res.plans[0], d=Math.round(res.baseline.fuel-p.fuel);
+    chatPush("ai",`<b>Plan A suggested:</b> ${p.corr} at ${p.v} kn${p.oneEngine?", single engine":""} — ETA ${eta(p.t)}, ${Math.round(p.fuel).toLocaleString()} L${d>0?` (saves ${d.toLocaleString()} L vs baseline)`:""}, max seas ${p.maxHs.toFixed(1)} m. Ask me why, or set a constraint.`);
+  }
+}
+/* ---------- Vessel state panel: per-parameter optimality for the current mission mix ---------- */
+function vstateRows(res, r){
+  const clamp=(x)=>Math.max(0,Math.min(1,x));
+  const hsAvg=r.maxHs*0.55;
+  // speed: best achievable score on this corridor vs chosen
+  const same=res.cands.filter(c=>c.side===r.side);
+  const bestScore=Math.min(...same.map(c=>c.score));
+  const bestV=same.find(c=>c.score===bestScore).v;
+  const pSpeed=clamp(bestScore/r.score);
+  // engine config: chosen vs alternative at this speed & sea state
+  const f1=TWIN.fuelRate(r.v,hsAvg,180,315,true), f2=TWIN.fuelRate(r.v,hsAvg,180,315,false);
+  const chosenF=r.oneEngine?f1:f2, pConf=clamp(Math.min(f1,f2)/chosenF);
+  // engine load: per-engine % of MCR, sweet band 55–85%
+  const load=Math.min(115,Math.pow(r.v/17.5,3)*100*(r.oneEngine?2:1));
+  const pLoad=clamp(1-Math.max(0, load<55?(55-load):(load>85?load-85:0))/40);
+  // sea-state exposure vs best available among all candidates
+  const minHs=Math.min(...res.cands.map(c=>c.maxHs));
+  const pSea=r.maxHs>0.2?clamp(minHs/r.maxHs):1;
+  // average fuel rate vs calm-water rate at same speed/config
+  const actual=r.fuel/r.t, calm=TWIN.fuelRate(r.v,0.3,0,0,r.oneEngine);
+  const pFuel=clamp(calm/actual);
+  return [
+    {name:"Speed setpoint", val:`${r.v} kn`, p:pSpeed,
+     note:pSpeed>0.98?"optimal for current mission mix":`${bestV} kn scores better on this routing`},
+    {name:"Engine configuration", val:r.oneEngine?"single engine":"twin engine", p:pConf,
+     note:pConf>0.98?"most efficient config at this speed":"config penalty at this speed/sea state"},
+    {name:"Engine load", val:`${Math.round(load)}% MCR`, p:pLoad,
+     note:load<55?"below efficient band — poor SFOC region":(load>85?"high load — elevated wear rate":"inside 55–85% sweet band")},
+    {name:"Sea-state exposure", val:`${r.maxHs.toFixed(1)} m max`, p:pSea,
+     note:pSea>0.9?"near minimum achievable this passage":"calmer routing available at other objectives' expense"},
+    {name:"Added resistance", val:`${Math.round(actual)} L/h avg`, p:pFuel,
+     note:`${Math.round((actual/calm-1)*100)}% above calm-water burn at ${r.v} kn`},
+    {name:"Trim / ballast", val:"—", p:null, note:"no sensor feed — using vessel priors"},
+    {name:"Stabiliser mode", val:"—", p:null, note:"no sensor feed — using vessel priors"}
+  ];
+}
+function posAtTime(r,t){ // position + course along track at t hours
+  let rem=t*r.v, pos=r.track[0], hdg=bearing(r.track[0],r.track[1]);
+  for(let i=1;i<r.track.length&&rem>0;i++){ const d=nmDist(r.track[i-1],r.track[i]);
+    hdg=bearing(r.track[i-1],r.track[i]);
+    if(rem<=d){ const f=rem/d; pos={lat:r.track[i-1].lat+(r.track[i].lat-r.track[i-1].lat)*f, lon:r.track[i-1].lon+(r.track[i].lon-r.track[i-1].lon)*f}; rem=0;}
+    else { rem-=d; pos=r.track[i]; } }
+  return {pos,hdg};
+}
+function relDesc(th){
+  const s=["ahead","starboard bow","starboard beam","starboard quarter","astern","port quarter","port beam","port bow"];
+  return s[Math.round(((th%360)+360)%360/45)%8];
+}
+function tileHTML(row){
+  const col=row.p===null?"var(--line)":(row.p>=0.9?"var(--good)":row.p>=0.7?"var(--warn)":"var(--bad)");
+  return `<div class="vtile${row.p===null?" nosensor":""}"><div class="name">${row.name}</div><div class="val">${row.val}</div>
+    <span class="bar"><i style="width:${row.p===null?100:Math.round(row.p*100)}%;background:${col};${row.p===null?"opacity:.25":""}"></i></span>
+    <div class="note">${row.note}</div></div>`;
+}
+function pCol(p){ return p===null?"#3a4c62":(p>=0.9?"#3ddc84":p>=0.7?"#e7b935":"#ef6a5a"); }
+function renderVessel(res, scId, t){
+  const r=res.plans[window._sel||0], rows=vstateRows(res,r);
+  const best=Math.min(...res.cands.map(c=>c.score)), pAll=Math.max(0,Math.min(1,best/r.score));
+  const overall={name:"Overall — mission fit", val:`${Math.round(pAll*100)}%`, p:pAll,
+    note:pAll>=0.99?"optimum plan for the current slider mix":"a higher-scoring plan exists — see recommendations"};
+  const {pos,hdg}=posAtTime(r,Math.min(t,r.t-0.1));
+  const w=SCENARIOS[scId](pos.lat,pos.lon,t);
+  const thW=((w.waveDir-hdg)%360+360)%360, thA=((w.wDir-hdg)%360+360)%360;
+  const arrow=(th,R,col,sc)=>{ const x=125+R*Math.sin(th*Math.PI/180), y=175-R*Math.cos(th*Math.PI/180);
+    return `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)}) rotate(${(th+180).toFixed(0)}) scale(${sc})"><path d="M0,-11 L7,5 L-7,5 Z" fill="${col}"/></g>`; };
+  const engFill=pCol(rows[2].p), hullStroke=pCol(rows[4].p), ringCol=pCol(rows[3].p);
+  const svg=`
+  <svg viewBox="0 0 250 350" style="display:block;margin:0 auto;max-height:330px">
+    <circle cx="125" cy="175" r="112" fill="none" stroke="${ringCol}" stroke-opacity=".45" stroke-dasharray="3,5"/>
+    ${[0,45,90,135,180,225,270,315].map(a=>{const x=125+118*Math.sin(a*Math.PI/180),y=175-118*Math.cos(a*Math.PI/180);
+      return `<circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="1.4" fill="#3a4c62"/>`;}).join("")}
+    <path d="M125,45 C147,75 155,120 156,170 L156,265 C156,292 143,306 125,306 C107,306 94,292 94,265 L94,170 C95,120 103,75 125,45 Z"
+      fill="#16283c" stroke="${hullStroke}" stroke-width="2.4"/>
+    <rect x="103" y="140" width="44" height="82" rx="9" fill="#1e3450" stroke="#31537a"/>
+    <rect x="108" y="122" width="34" height="14" rx="5" fill="#24405f"/>
+    <rect x="106" y="262" width="15" height="24" rx="3" fill="${r.oneEngine?"#22344c":engFill}" ${r.oneEngine?'stroke="#3a4c62" stroke-dasharray="2,2"':""}/>
+    <rect x="129" y="262" width="15" height="24" rx="3" fill="${engFill}"/>
+    <text x="125" y="300" font-size="8" fill="#7e93ab" text-anchor="middle">${r.oneEngine?"SINGLE ENGINE":"TWIN ENGINE"}</text>
+    <rect x="82" y="192" width="9" height="13" rx="2" fill="#22344c" stroke="#3a4c62"/>
+    <rect x="159" y="192" width="9" height="13" rx="2" fill="#22344c" stroke="#3a4c62"/>
+    ${w.hs>=0.3?arrow(thW,132,"#4aa3d8",Math.min(1.5,0.6+w.hs/3)):""}
+    ${arrow(thA,132,"#8fb4cc",0.55)}
+    <text x="125" y="24" font-size="9" fill="#7e93ab" text-anchor="middle">M/Y 50m · heading-up</text>
+  </svg>
+  <div class="envlab">COG ${Math.round(hdg)}° · ${r.v} kn · seas ${w.hs.toFixed(1)} m from ${relDesc(thW)} · wind ${Math.round(w.wSpd)} kn from ${relDesc(thA)}</div>`;
+  document.getElementById("vstate").innerHTML=
+    `<div class="vwrap">
+       <div class="vside">${tileHTML(rows[0])}${tileHTML(rows[2])}${tileHTML(rows[4])}</div>
+       <div>${svg}</div>
+       <div class="vside">${tileHTML(rows[1])}${tileHTML(rows[3])}${tileHTML(overall)}</div>
+     </div>
+     <div class="vbottom">${tileHTML(rows[5])}${tileHTML(rows[6])}
+       <div class="vtile"><div class="name">CO₂ this passage</div><div class="val">${(r.fuel*TWIN.co2PerL/1000).toFixed(1)} t</div>
+         <span class="bar"><i style="width:${Math.min(100,Math.round(r.fuel/res.baseline.fuel*100))}%;background:${r.fuel<=res.baseline.fuel?"var(--good)":"var(--bad)"}"></i></span>
+         <div class="note">${r.fuel<=res.baseline.fuel?Math.round((1-r.fuel/res.baseline.fuel)*100)+"% below do-nothing baseline":"above baseline — schedule priority"}</div></div>
+     </div>`;
+}
+/* ---------- Chat: deterministic bridge assistant over the current plan state ---------- */
+function chatPush(who,txt){
+  const m=document.getElementById("msgs"), el=document.createElement("div");
+  el.className="msg "+who; el.innerHTML=txt; m.appendChild(el);
+  while(m.children.length>40) m.removeChild(m.firstChild);
+  m.scrollTop=m.scrollHeight;
+}
+function answerChat(qRaw){
+  const res=window._res; if(!res) return "One moment — still computing.";
+  const r=res.plans[window._sel||0], B=res.baseline, scId=document.getElementById("scenario").value;
+  const q=qRaw.toLowerCase();
+  const m=q.match(/arrive\s*(?:by|before)?\s*(\d{1,2})[:.]?(\d{2})?/);
+  if(m){
+    let h=+m[1]+(+m[2]||0)/60; let win=h-8; if(win<=0) win+=24;
+    const sel=document.getElementById("arriveby");
+    let opt=[...sel.options].find(o=>o.value==String(Math.round(win)));
+    if(!opt){ opt=document.createElement("option"); opt.value=Math.round(win*10)/10;
+      opt.textContent=`${m[1].padStart(2,"0")}:${m[2]||"00"} (custom)`; sel.appendChild(opt); }
+    sel.value=opt.value; window._sel=0; render();
+    const nr=window._res;
+    return nr.missedWindow
+      ? `No plan makes ${m[1].padStart(2,"0")}:${m[2]||"00"} in this weather — fastest passage is ${fmtH(nr.plans[0].t)} (ETA ${eta(nr.plans[0].t)}). Consider an earlier departure.`
+      : `ETA window set. Plan A now: ${nr.plans[0].corr} at ${nr.plans[0].v} kn, ETA ${eta(nr.plans[0].t)} — ${Math.round(nr.plans[0].fuel).toLocaleString()} L.`;
+  }
+  if(/why|route|east|west|corridor/.test(q)) return `Plan ${"ABC"[window._sel||0]} ${why(r,B,res)}`;
+  if(/fuel|burn|litre|liter|consum|cost/.test(q)){
+    const d=r.fuel-B.fuel;
+    return `${Math.round(r.fuel).toLocaleString()} L for the passage (${Math.round(r.fuel/r.t)} L/h average) — ${d<=0?Math.abs(Math.round(d)).toLocaleString()+" L less than":Math.round(d).toLocaleString()+" L more than"} the do-nothing baseline. CO₂: ${(r.fuel*TWIN.co2PerL/1000).toFixed(1)} t.`;
+  }
+  if(/rough|comfort|motion|seas|swell|sick|guest/.test(q)){
+    const wx=SCENARIOS[scId]; let worst={hs:0}, wt=0;
+    for(let tt=0;tt<r.t;tt+=1){ const {pos}=posAtTime(r,tt); const w=wx(pos.lat,pos.lon,tt);
+      if(w.hs>worst.hs){worst={hs:w.hs,pos}; wt=tt;} }
+    const where=worst.pos ? (worst.pos.lat>42.8?"crossing the Ligurian":worst.pos.lon<9.0?"west of Corsica":worst.pos.lon>9.6?"in the Tyrrhenian":"near the Bonifacio approaches") : "en route";
+    return `Peak seas on this plan: ${worst.hs.toFixed(1)} m, ${where}, about ${Math.round(wt)}h out (${eta(wt)}). ${r.maxHs<1.2?"A comfortable passage throughout.":"If guests are aboard, raising Comfort priority will trade time or fuel for lower motion."}`;
+  }
+  if(/wear|engine|maintenance|fatigue|machinery|slam/.test(q))
+    return `Wear index ${(r.wear/r.t).toFixed(1)}/h average: ${r.oneEngine?"single-engine at low load — gentle on machinery, watch single-shaft hours.":"twin-engine; "} ${r.maxHs>2&&r.v>13?"Some slamming exposure at this speed in head seas — Plan with lower speed or the lee-side corridor reduces it.":"No significant slamming exposure on this plan."}`;
+  if(/slow|faster|speed|quick/.test(q)){
+    const alts=res.plans.filter((p,i)=>i!==(window._sel||0));
+    return `Current: ${r.v} kn, ${fmtH(r.t)}. Alternatives: ${alts.map((p,i)=>`${"ABC"[res.plans.indexOf(p)]} — ${p.v} kn, ${fmtH(p.t)}, ${Math.round(p.fuel).toLocaleString()} L`).join("; ")}. Tap a plan card to switch.`;
+  }
+  if(/co2|emission|carbon|cii|seemp/.test(q))
+    return `${(r.fuel*TWIN.co2PerL/1000).toFixed(1)} t CO₂ this passage vs ${(B.fuel*TWIN.co2PerL/1000).toFixed(1)} t baseline. The voyage debrief logs this against your SEEMP continuous-improvement record.`;
+  if(/weather|forecast|wind|grib/.test(q)){
+    const w=SCENARIOS[scId](42.5,8.5,0);
+    return `Scenario: ${document.getElementById("scenario").selectedOptions[0].textContent}. Off west Corsica now: ${w.hs.toFixed(1)} m, wind ${Math.round(w.wSpd)} kn. Forecast field updates re-optimise the plan automatically underway.`;
+  }
+  return `I can explain the recommended plans or adjust the passage. Try: "Why this route?", "Fuel vs baseline?", "Where is it roughest?", "What about wear?", or give me a constraint like "arrive by 21:00".`;
+}
+function chatAsk(q){ if(!q.trim()) return; chatPush("me",q); setTimeout(()=>chatPush("ai",answerChat(q)),150); }
+const PRESETS={ owner:{econ:25,comf:90,wear:50}, repo:{econ:20,comf:10,wear:60}, charter:{econ:85,comf:40,wear:25}, delivery:{econ:45,comf:15,wear:80} };
+document.getElementById("presets").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#presets button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
+  const p=PRESETS[b.dataset.p];
+  document.getElementById("w_econ").value=p.econ; document.getElementById("w_comf").value=p.comf; document.getElementById("w_wear").value=p.wear;
+  window._sel=0; render();
+});
+for(const id of ["scenario","arriveby","w_econ","w_comf","w_wear"]) document.getElementById(id).addEventListener("input",()=>{window._sel=0; render();});
+document.getElementById("tscrub").addEventListener("input",render);
+document.getElementById("chatsend").addEventListener("click",()=>{const i=document.getElementById("chatin"); chatAsk(i.value); i.value="";});
+document.getElementById("chatin").addEventListener("keydown",e=>{if(e.key==="Enter"){chatAsk(e.target.value); e.target.value="";}});
+document.getElementById("chips").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) chatAsk(b.dataset.q);});
+/* register live weather field if the ingestion layer has produced one (prototype/livewx.js) */
+if(typeof window!=="undefined" && window.LIVE_WX){
+  SCENARIOS.live=makeLiveScenario(window.LIVE_WX);
+  const o=document.createElement("option"); o.value="live";
+  o.textContent=`Live — ${window.LIVE_WX.source} (${window.LIVE_WX.fetched.slice(0,16)}Z)`;
+  document.getElementById("scenario").prepend(o);
+  document.getElementById("scenario").value="live";
+}
+render();
+</script>
+</body>
+</html>
