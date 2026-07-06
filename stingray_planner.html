@@ -16,8 +16,27 @@
   header h1{font-size:19px; letter-spacing:3px; color:var(--acc); font-weight:700;}
   header h1 .brand2{font-size:11px; letter-spacing:2px; color:var(--dim); font-weight:600;}
   header .sub{color:var(--dim); font-size:12px;}
-  header .tag{margin-left:auto; font-size:11px; color:var(--gold); border:1px solid var(--gold); border-radius:4px; padding:2px 8px;}
-  .wrap{display:grid; grid-template-columns:300px 1fr 400px; gap:14px; padding:14px 20px; align-items:start;}
+  header .tag{margin-left:12px; font-size:11px; color:var(--gold); border:1px solid var(--gold); border-radius:4px; padding:2px 8px;}
+  .tabs{margin-left:auto; display:flex; gap:6px;}
+  .tabs button{background:var(--panel2); color:var(--dim); border:1px solid var(--line); border-radius:7px; padding:6px 14px; font-size:11.5px; letter-spacing:1px; cursor:pointer;}
+  .tabs button.on{color:var(--acc); border-color:var(--acc); background:#0f2536;}
+  .wrap{display:grid; grid-template-columns:380px 1fr 380px; gap:14px; padding:14px 20px; align-items:start;}
+  body.mode-plan .transit-only{display:none;}
+  body.mode-transit .plan-only{display:none;}
+  body.mode-plan .wrap{grid-template-areas:"mission map plans" "chat map plans";}
+  body.mode-transit .wrap{grid-template-areas:"active vessel plans" "map vessel plans" "map chat plans";}
+  #card-mission{grid-area:mission;} #card-active{grid-area:active;} #card-map{grid-area:map;}
+  #card-vessel{grid-area:vessel;} #card-plans{grid-area:plans;} #card-chat{grid-area:chat;}
+  .setrow{display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; margin-bottom:12px;}
+  .set{background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:7px 8px; text-align:center;}
+  .set .name{font-size:9.5px; letter-spacing:.4px; color:var(--dim); text-transform:uppercase;}
+  .set .val{font-size:14px; font-weight:650; margin-top:3px; font-variant-numeric:tabular-nums;}
+  .set.big .val{font-size:19px; color:var(--acc);}
+  .set .live{font-size:9.5px; margin-top:3px; font-variant-numeric:tabular-nums;}
+  @media (max-width:1500px){ .setrow{grid-template-columns:repeat(3,1fr);} }
+  .startbtn{width:100%; margin-top:12px; padding:13px; background:var(--acc); color:#062030;
+    border:0; border-radius:9px; font-size:14px; font-weight:750; letter-spacing:1.5px; cursor:pointer;}
+  .startbtn:hover{filter:brightness(1.12);}
   .card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px;}
   .card h2{font-size:11px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; margin-bottom:10px;}
   .presets{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px;}
@@ -71,16 +90,19 @@
   @media (max-width:1100px){ .wrap{grid-template-columns:1fr;} }
 </style>
 </head>
-<body>
+<body class="mode-plan">
 <header>
   <h1>STINGRAY <span class="brand2">MARINE TECHNOLOGY</span></h1>
   <div class="sub">Passage & Performance Optimisation through AI Innovation — prototype · advisory only</div>
+  <nav class="tabs">
+    <button id="tab-plan" class="on">PLAN PASSAGE</button>
+    <button id="tab-transit">UNDERWAY</button>
+  </nav>
   <div class="tag">SYNTHETIC DATA</div>
 </header>
 
 <div class="wrap">
-  <!-- LEFT: mission -->
-  <div class="card">
+  <div class="card plan-only" id="card-mission">
     <h2>Passage</h2>
     <div class="route-line"><b>Antibes</b> → <b>Porto Cervo</b> · dep 08:00 · M/Y 50m displacement (twin engine)</div>
     <div class="slider">
@@ -122,13 +144,17 @@
     <div class="conf">Twin v0 confidence: synthetic. On a real vessel these predictions carry live confidence intervals learned from telemetry.</div>
   </div>
 
-  <!-- CENTRE: vessel state + chat -->
-  <div class="col">
-    <div class="card">
-      <h2>Vessel state — optimisation for current mission mix</h2>
-      <div id="vstate"></div>
-    </div>
-    <div class="card">
+  <div class="card transit-only" id="card-active">
+    <h2>Active plan</h2>
+    <div id="active"></div>
+  </div>
+
+  <div class="card transit-only" id="card-vessel">
+    <h2>Vessel state — live setpoints & optimisation</h2>
+    <div id="vstate"></div>
+  </div>
+
+  <div class="card" id="card-chat">
       <h2>Ask Stingray</h2>
       <div class="chat">
         <div class="msgs" id="msgs"></div>
@@ -144,17 +170,15 @@
           <button id="chatsend">Send</button>
         </div>
       </div>
-    </div>
   </div>
 
-  <!-- RIGHT: plans + chart overview -->
-  <div class="col">
-    <div class="card">
+  <div class="card" id="card-plans">
       <h2>Recommended plans</h2>
       <div id="plans"></div>
       <div class="baseline" id="basecard"></div>
-    </div>
-    <div class="card">
+  </div>
+
+  <div class="card" id="card-map">
       <h2>Route overview — <span style="color:var(--gold)">not for navigation</span></h2>
       <canvas id="map" width="860" height="640"></canvas>
       <div class="maprow">
@@ -162,7 +186,7 @@
         <input type="range" id="tscrub" min="0" max="30" value="0">
         <span id="poslab"></span>
       </div>
-    </div>
+      <button id="startbtn" class="startbtn plan-only">BEGIN PASSAGE</button>
   </div>
 </div>
 <footer>Stingray Marine Technology — stingraymarinetechnology.com · prototype: vessel, chart and routing data synthetic, not for navigation. Recommendations advisory only; the captain retains full authority. © Stingray Marine Technology 2026</footer>
@@ -580,6 +604,11 @@ function render(){
   document.getElementById("basecard").innerHTML=
     `<b>Do-nothing baseline</b> (direct via Bonifacio, 14 kn, no routing): ${Math.round(B.fuel).toLocaleString()} L · ${fmtH(B.t)} · max seas ${B.maxHs.toFixed(1)} m`;
   renderVessel(res, scId, t);
+  renderActive(res, t);
+  const sb=document.getElementById("startbtn"), sp=res.plans[window._sel||0];
+  sb.textContent=`BEGIN PASSAGE — PLAN ${"ABC"[window._sel||0]} · ${sp.v} KN · ETA ${eta(sp.t)}`;
+  sb.disabled=!!res.missedWindow;
+  sb.style.opacity=res.missedWindow?0.4:1;
   document.querySelector("header .tag").textContent = scId==="live" ? "LIVE WEATHER · SYNTHETIC VESSEL" : "SYNTHETIC DATA";
   document.getElementById("poslab").textContent="";
   // proactive chat suggestion when the recommendation changes
@@ -634,6 +663,18 @@ function posAtTime(r,t){ // position + course along track at t hours
     else { rem-=d; pos=r.track[i]; } }
   return {pos,hdg};
 }
+function nextAlteration(r,t){ // first course change >8° ahead of the vessel's current position
+  let rem=t*r.v, acc=0;
+  for(let i=1;i<r.track.length-1;i++){
+    acc+=nmDist(r.track[i-1],r.track[i]);
+    if(acc>rem){
+      const h1=bearing(r.track[i-1],r.track[i]), h2=bearing(r.track[i],r.track[i+1]);
+      const dh=((h2-h1+540)%360)-180;
+      if(Math.abs(dh)>8) return {inH:(acc-rem)/r.v, newCts:h2};
+    }
+  }
+  return null;
+}
 function relDesc(th){
   const s=["ahead","starboard bow","starboard beam","starboard quarter","astern","port quarter","port beam","port bow"];
   return s[Math.round(((th%360)+360)%360/45)%8];
@@ -653,6 +694,32 @@ function renderVessel(res, scId, t){
   const {pos,hdg}=posAtTime(r,Math.min(t,r.t-0.1));
   const w=SCENARIOS[scId](pos.lat,pos.lon,t);
   const thW=((w.waveDir-hdg)%360+360)%360, thA=((w.wDir-hdg)%360+360)%360;
+  const rpm=Math.round(600+850*Math.pow(r.v/14,1.5));
+  const alt=nextAlteration(r,Math.min(t,r.t-0.1));
+  // simulated live feed: sea-state-driven yaw, speed loss and rpm hunt (deterministic in t, so scrubbing replays)
+  const yaw=(1.5+2.2*w.hs)*Math.sin(t*9.1+2);
+  const liveHdg=(hdg+yaw+360)%360;
+  const liveBsp=Math.max(0, r.v - 0.12*Math.pow(w.hs,1.3) + 0.18*Math.sin(t*7.3));
+  const liveRpm=rpm+Math.round(14*Math.sin(t*5.7+1));
+  const dHdg=((liveHdg-hdg+540)%360)-180, dBsp=liveBsp-r.v;
+  const cHdg=Math.abs(dHdg)>10?"var(--bad)":Math.abs(dHdg)>5?"var(--warn)":"var(--good)";
+  const cBsp=Math.abs(dBsp)>1?"var(--bad)":Math.abs(dBsp)>0.5?"var(--warn)":"var(--good)";
+  const pad3=x=>String(Math.round(x)%360).padStart(3,"0");
+  const setrow=`<div class="setrow">
+    <div class="set big"><div class="name">Course to steer</div><div class="val">${pad3(hdg)}°T</div>
+      <div class="live" style="color:${cHdg}">HDG ${pad3(liveHdg)}° · Δ${dHdg>=0?"+":""}${dHdg.toFixed(0)}°</div></div>
+    <div class="set big"><div class="name">Target BSP</div><div class="val">${r.v.toFixed(1)} kn</div>
+      <div class="live" style="color:${cBsp}">LIVE ${liveBsp.toFixed(1)} kn · Δ${dBsp>=0?"+":""}${dBsp.toFixed(1)}</div></div>
+    <div class="set"><div class="name">Engine RPM</div><div class="val">≈${rpm}</div>
+      <div class="live" style="color:var(--dim)">LIVE ${liveRpm}</div></div>
+    <div class="set"><div class="name">Config</div><div class="val">${r.oneEngine?"1 engine":"2 engines"}</div>
+      <div class="live" style="color:var(--good)">${r.oneEngine?"stbd running":"both running"}</div></div>
+    <div class="set"><div class="name">Stabilisers</div><div class="val">${w.hs>=1.0?"Deploy":"Stow"}</div>
+      <div class="live" style="color:${w.hs>=1.0?"var(--good)":"var(--dim)"}">${w.hs>=1.0?"deployed":"stowed"}</div></div>
+    <div class="set"><div class="name">Next alteration</div><div class="val">${alt?`${pad3(alt.newCts)}°T in ${fmtH(alt.inH)}`:"steady leg"}</div>
+      <div class="live" style="color:var(--dim)">${alt?Math.round(alt.inH*r.v)+" nm to run":"—"}</div></div>
+  </div>
+  <div class="envlab" style="margin:-4px 0 10px">Live values simulated for demo — production reads NMEA 2000 / engine bus in real time</div>`;
   const arrow=(th,R,col,sc)=>{ const x=125+R*Math.sin(th*Math.PI/180), y=175-R*Math.cos(th*Math.PI/180);
     return `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)}) rotate(${(th+180).toFixed(0)}) scale(${sc})"><path d="M0,-11 L7,5 L-7,5 Z" fill="${col}"/></g>`; };
   const engFill=pCol(rows[2].p), hullStroke=pCol(rows[4].p), ringCol=pCol(rows[3].p);
@@ -675,7 +742,7 @@ function renderVessel(res, scId, t){
     <text x="125" y="24" font-size="9" fill="#7e93ab" text-anchor="middle">M/Y 50m · heading-up</text>
   </svg>
   <div class="envlab">COG ${Math.round(hdg)}° · ${r.v} kn · seas ${w.hs.toFixed(1)} m from ${relDesc(thW)} · wind ${Math.round(w.wSpd)} kn from ${relDesc(thA)}</div>`;
-  document.getElementById("vstate").innerHTML=
+  document.getElementById("vstate").innerHTML= setrow +
     `<div class="vwrap">
        <div class="vside">${tileHTML(rows[0])}${tileHTML(rows[2])}${tileHTML(rows[4])}</div>
        <div>${svg}</div>
@@ -686,6 +753,20 @@ function renderVessel(res, scId, t){
          <span class="bar"><i style="width:${Math.min(100,Math.round(r.fuel/res.baseline.fuel*100))}%;background:${r.fuel<=res.baseline.fuel?"var(--good)":"var(--bad)"}"></i></span>
          <div class="note">${r.fuel<=res.baseline.fuel?Math.round((1-r.fuel/res.baseline.fuel)*100)+"% below do-nothing baseline":"above baseline — schedule priority"}</div></div>
      </div>`;
+}
+function renderActive(res,t){
+  const el=document.getElementById("active"); if(!el) return;
+  const r=res.plans[window._sel||0], prog=Math.max(0,Math.min(1,t/r.t));
+  el.innerHTML=`<div class="route-line"><b>Plan ${"ABC"[window._sel||0]}</b> — ${r.corr} · ${r.v} kn${r.oneEngine?" · single engine":""}</div>
+    <div class="grid">
+      <span class="k">Departed</span><span class="v">08:00</span>
+      <span class="k">ETA</span><span class="v">${eta(r.t)}</span>
+      <span class="k">Progress</span><span class="v">${Math.round(prog*100)}% · ${Math.round(r.dist*prog)}/${Math.round(r.dist)} nm</span>
+      <span class="k">Fuel vs plan</span><span class="v">${Math.round(r.fuel*prog).toLocaleString()} / ${Math.round(r.fuel).toLocaleString()} L</span>
+      <span class="k">Max seas ahead</span><span class="v">${r.maxHs.toFixed(1)} m</span>
+    </div>
+    <span class="bar" style="margin-top:8px"><i style="width:${Math.round(prog*100)}%;background:var(--acc)"></i></span>
+    <div class="baseline" style="margin-top:8px">Scrub the forecast slider on the route overview to advance the passage.</div>`;
 }
 /* ---------- Chat: deterministic bridge assistant over the current plan state ---------- */
 function chatPush(who,txt){
@@ -752,6 +833,23 @@ document.getElementById("tscrub").addEventListener("input",render);
 document.getElementById("chatsend").addEventListener("click",()=>{const i=document.getElementById("chatin"); chatAsk(i.value); i.value="";});
 document.getElementById("chatin").addEventListener("keydown",e=>{if(e.key==="Enter"){chatAsk(e.target.value); e.target.value="";}});
 document.getElementById("chips").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) chatAsk(b.dataset.q);});
+function setMode(m){
+  document.body.classList.toggle("mode-plan", m==="plan");
+  document.body.classList.toggle("mode-transit", m==="transit");
+  document.getElementById("tab-plan").classList.toggle("on", m==="plan");
+  document.getElementById("tab-transit").classList.toggle("on", m==="transit");
+  if(m==="transit" && +document.getElementById("tscrub").value===0){
+    document.getElementById("tscrub").value=2; // join the passage 2h out so setpoints are live
+  }
+  render();
+}
+document.getElementById("tab-plan").addEventListener("click",()=>setMode("plan"));
+document.getElementById("tab-transit").addEventListener("click",()=>setMode("transit"));
+document.getElementById("startbtn").addEventListener("click",()=>{
+  const r=window._res.plans[window._sel||0];
+  chatPush("ai",`<b>Passage started</b> on Plan ${"ABC"[window._sel||0]} — ${r.corr} at ${r.v} kn. Departed Antibes 08:00, ETA Porto Cervo ${eta(r.t)}. I'll flag any forecast or performance drift; setpoints are on the vessel display.`);
+  setMode("transit");
+});
 /* register live weather field if the ingestion layer has produced one (prototype/livewx.js) */
 if(typeof window!=="undefined" && window.LIVE_WX){
   SCENARIOS.live=makeLiveScenario(window.LIVE_WX);
