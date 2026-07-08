@@ -6,8 +6,9 @@
 <title>Stingray — Passage & Performance Optimisation (Prototype)</title>
 <style>
   :root{
-    --bg:#0b1420; --panel:#121f30; --panel2:#0e1927; --line:#22344c;
-    --txt:#dce8f5; --dim:#7e93ab; --acc:#35c4e7; --gold:#e7b935;
+    /* Stingray brand palette (see BRAND.md): navy #0E1138, teal #00A19A, grad #53B2B9->#0C807E */
+    --bg:#0a0d2a; --panel:#12163c; --panel2:#0e1233; --line:#252b58;
+    --txt:#dfe6f5; --dim:#8590b5; --acc:#00A19A; --acc2:#53B2B9; --gold:#e7b935;
     --good:#3ddc84; --warn:#e7b935; --bad:#ef6a5a;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
@@ -34,7 +35,8 @@
   .set.big .val{font-size:19px; color:var(--acc);}
   .set .live{font-size:9.5px; margin-top:3px; font-variant-numeric:tabular-nums;}
   @media (max-width:1500px){ .setrow{grid-template-columns:repeat(3,1fr);} }
-  .startbtn{width:100%; margin-top:12px; padding:13px; background:var(--acc); color:#062030;
+  .startbtn{width:100%; margin-top:12px; padding:13px;
+    background:linear-gradient(135deg, var(--acc2), #0C807E); color:#0E1138;
     border:0; border-radius:9px; font-size:14px; font-weight:750; letter-spacing:1.5px; cursor:pointer;}
   .startbtn:hover{filter:brightness(1.12);}
   .card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px;}
@@ -92,7 +94,8 @@
 </head>
 <body class="mode-plan">
 <header>
-  <h1>STINGRAY <span class="brand2">MARINE TECHNOLOGY</span></h1>
+  <img src="assets/stingray_logo.svg" alt="Stingray" style="height:44px; margin:-6px 0;">
+  <h1 style="letter-spacing:2px; font-size:12px; color:var(--dim); font-weight:600;">MARINE TECHNOLOGY</h1>
   <div class="sub">Passage & Performance Optimisation through AI Innovation — prototype · advisory only</div>
   <nav class="tabs">
     <button id="tab-plan" class="on">PLAN PASSAGE</button>
@@ -521,7 +524,7 @@ function drawLand(){
   ctx.fillText("CORSE", X(9.02), Y(42.25)); ctx.fillText("SARDEGNA", X(8.85), Y(40.87));
   ctx.fillText("LIGURIA", X(8.55), Y(44.32)); ctx.fillText("Capraia", X(9.72), Y(43.13));
 }
-const COLORS=["#0b66c3","#0a8f4e","#c25e00"]; // saturated for light chart; still legible as dots on dark cards
+const COLORS=["#0C807E","#0b66c3","#c25e00"]; // plan A in brand teal; saturated for light chart, legible as dots on dark cards
 function drawRoutes(res,selIdx,t){
   // baseline
   ctx.setLineDash([5,5]); ctx.strokeStyle="rgba(70,90,110,.85)"; ctx.lineWidth=1.5;
