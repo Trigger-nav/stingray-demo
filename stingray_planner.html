@@ -547,6 +547,16 @@ async function requestPlan(){
   }catch(err){
     if(myGen!==_reqGen) return;
     showLoading(false);
+    // A render-time bug (TypeError etc.) is not a connection problem — don't
+    // let it masquerade as one (found in B2's manual browser verification:
+    // a renderUI crash surfaced as "CONNECTION FAILED"). Rethrowing non-Api
+    // errors also stops bootstrap's catch from painting the full
+    // connection-failure state over a successfully-fetched result.
+    if(!(err instanceof ApiError)){
+      console.error("Stingray UI error (not a connection problem):", err);
+      showError({kind:"ui_bug", message:"UI rendering error — see browser console (this is a bug, not a connection problem)."});
+      return;
+    }
     if(window._res){
       await renderUI(); // keep the last successful result visible underneath the error
     }else{
@@ -650,10 +660,15 @@ async function refreshHealth(){
    trivially "100% optimal" -- expected, not a bug. */
 function vstateRows(res, r){
   const clamp=(x)=>Math.max(0,Math.min(1,x));
-  const pool=[...res.plans, res.baseline];
-  const same=pool.filter(c=>c.side===r.side);
-  const bestScore=Math.min(...same.map(c=>c.score));
-  const bestCand=same.find(c=>c.score===bestScore); const bestV=bestCand.v;
+  // baseline.score is NaN by design (B3: baselines aren't scored) — it must
+  // never enter min/compare logic: NaN poisons Math.min and NaN!==NaN makes
+  // .find() return undefined (the "reading 'v'" crash caught in B2's manual
+  // browser verification).
+  const pool=[...res.plans, res.baseline];               // full pool: fine for maxHs etc. (finite everywhere)
+  const scored=pool.filter(c=>Number.isFinite(c.score)); // score-compare pool: baseline excluded (score NaN by design, B3)
+  const same=scored.filter(c=>c.side===r.side);
+  const bestCand=(same.length?same:scored).reduce((a,b)=>b.score<a.score?b:a);
+  const bestScore=bestCand.score; const bestV=bestCand.v;
   const pSpeed=clamp(bestScore/r.score);
   // engine load: per-engine % of MCR, sweet band 55–85%
   const load=Math.min(115,Math.pow(r.v/17.5,3)*100*(r.oneEngine?2:1));
@@ -705,8 +720,8 @@ function tileHTML(row){
 function pCol(p){ return p===null?"#3a4c62":(p>=0.9?"#3ddc84":p>=0.7?"#e7b935":"#ef6a5a"); }
 function renderVessel(res, t){
   const r=res.plans[window._sel||0], rows=vstateRows(res,r);
-  const pool=[...res.plans, res.baseline];
-  const best=Math.min(...pool.map(c=>c.score)), pAll=Math.max(0,Math.min(1,best/r.score));
+  const scoredPool=[...res.plans, res.baseline].filter(c=>Number.isFinite(c.score)); // baseline score is NaN by design
+  const best=Math.min(...scoredPool.map(c=>c.score)), pAll=Math.max(0,Math.min(1,best/r.score));
   const overall={name:"Overall — mission fit", val:`${Math.round(pAll*100)}%`, p:pAll,
     note:pAll>=0.99?"optimum plan for the current slider mix":"a higher-scoring plan exists — see recommendations"};
   const {pos,hdg}=posAtTime(r,Math.min(t,r.t-0.1));
