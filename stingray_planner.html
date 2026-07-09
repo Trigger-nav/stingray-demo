@@ -297,16 +297,34 @@ function mapPlanResult(result, latestH){
   };
 }
 
-async function optimise(econ, comf, latestH){
+async function optimise(econ, comf, latestH, onSlow){
   const submitted = await apiFetch("POST", "/v1/plans", { pace: econ, comfort: comf, latest_arrival_h: latestH });
-  const deadline = Date.now() + 90_000;
-  while(Date.now() < deadline){
+  // ticket B2 verification: a real timing bug (core.optimiser.optimise
+  // was doing its expensive isochrone pre-pass *twice* for any
+  // latest_arrival_h-constrained request -- fixed server-side, see
+  // core/isochrone.py's arrival_times_within docstring) pushed a
+  // constrained replan past the old flat 90s deadline. Fixed at the
+  // root, but worker-pool contention under real concurrent interactive
+  // use (several superseded-but-still-running jobs queued ahead of one
+  // that matters) can still occasionally push latency past a fixed
+  // ceiling -- so on top of the server-side fix, this now degrades
+  // gracefully instead of abandoning the job: 90s crosses a *soft*
+  // deadline (onSlow fires once, so the UI can say "still computing"
+  // rather than nothing) but keeps polling up to a 5-minute hard
+  // ceiling before finally giving up. The job that was actually
+  // submitted always keeps running server-side either way; this just
+  // stops the client from walking away from a result it's about to get.
+  const softDeadline = Date.now() + 90_000;
+  const hardDeadline = Date.now() + 300_000;
+  let slowNotified = false;
+  while(Date.now() < hardDeadline){
     const rec = await apiFetch("GET", `/v1/plans/${submitted.job_id}`);
     if(rec.status==="done") return mapPlanResult(rec.result, latestH);
     if(rec.status==="failed") throw new ApiError("job_failed", rec.error?.message ?? "planning failed");
+    if(!slowNotified && Date.now()>softDeadline){ slowNotified=true; if(onSlow) onSlow(); }
     await sleep(1500);
   }
-  throw new ApiError("timeout", "planning is taking longer than expected");
+  throw new ApiError("timeout", "planning is taking much longer than expected (5+ minutes) — the planning service may be overloaded or stuck.");
 }
 
 /* ---------- Weather-field snapshots (drawWx's heatmap/wind layer, ticket B2 amendment) ----------
@@ -508,10 +526,10 @@ function econVal(){ return +document.getElementById("w_econ").value; }
 function comfVal(){ return +document.getElementById("w_comf").value; }
 function latestHVal(){ const ab=document.getElementById("arriveby").value; return ab? +ab : null; }
 
-function showLoading(on){
+function showLoading(on, message){
   const el=document.getElementById("planstatus");
   el.style.display = on ? "block" : "none";
-  el.textContent = "Computing plan…";
+  el.textContent = message || "Computing plan…";
 }
 function errorCopy(err){
   const copy = {
@@ -519,7 +537,7 @@ function errorCopy(err){
     auth: "Planning service rejected the demo credentials — contact Stingray to refresh them.",
     invalid_request: err.message,
     job_failed: err.message,
-    timeout: "Planning is taking longer than expected — try again in a moment.",
+    timeout: "Planning is taking much longer than expected (5+ minutes) — the job may still finish; try again shortly or check the planning service.",
     busy: "Planning service is busy right now — try again in a moment.",
     not_found: "That plan is no longer available — try again.",
   };
@@ -537,7 +555,9 @@ async function requestPlan(){
   const myGen = ++_reqGen;
   showLoading(true);
   try{
-    const res = await optimise(econVal(), comfVal(), latestHVal());
+    const res = await optimise(econVal(), comfVal(), latestHVal(), ()=>{
+      if(myGen===_reqGen) showLoading(true, "Still computing — this passage is taking longer than usual, still waiting…");
+    });
     if(myGen!==_reqGen) return; // superseded by a newer request -- drop silently
     res.comfRef=Math.max(res.baseline.comfort,...res.plans.map(p=>p.comfort),1);
     res.wearRef=Math.max(res.baseline.wear,...res.plans.map(p=>p.wear),1);
