@@ -1,12 +1,13 @@
-# Stingray demo — GitHub Pages deploy with scheduled live-weather refresh.
+# Stingray demo — GitHub Pages deploy. Ticket B2: the demo now reads real
+# weather from a running planner API (see prototype/deploy/HOSTING.md), not
+# a scheduled static-file refresh baked into the page at deploy time — no
+# cron trigger, no weather-fetch step needed.
 # Place this file at .github/workflows/deploy.yml in your repo, then enable
 # Settings → Pages → Source: "GitHub Actions".
 name: Deploy Stingray demo
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: "0 */6 * * *"   # refresh live weather every 6 hours
   workflow_dispatch:
 
 permissions:
@@ -26,8 +27,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch live weather (writes prototype/livewx.js)
-        run: python3 prototype/ingest/fetch_weather.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

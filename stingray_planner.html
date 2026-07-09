@@ -101,7 +101,7 @@
     <button id="tab-plan" class="on">PLAN PASSAGE</button>
     <button id="tab-transit">UNDERWAY</button>
   </nav>
-  <div class="tag">SYNTHETIC DATA</div>
+  <div class="tag">CONNECTING…</div>
 </header>
 
 <div class="wrap">
@@ -118,14 +118,7 @@
         <option value="22">06:00 tomorrow</option>
       </select>
     </div>
-    <div class="slider">
-      <label><span>Weather scenario</span></label>
-      <select id="scenario">
-        <option value="mistral">Mistral — NW gale west of Corsica</option>
-        <option value="calm">Calm — light airs everywhere</option>
-        <option value="easterly">Easterly swell — lee shore east coast</option>
-      </select>
-    </div>
+    <div class="conf" id="wxprov" style="margin-top:8px; padding:7px 9px; border:1px dashed var(--line); border-radius:7px;">Weather: —</div>
     <h2 style="margin-top:16px">Mission</h2>
     <div class="presets" id="presets">
       <button data-p="owner">Owner aboard</button>
@@ -144,7 +137,7 @@
     <div class="conf" style="margin-top:8px; padding:7px 9px; border:1px dashed var(--line); border-radius:7px;">
       <b style="color:var(--txt); font-weight:600;">Machinery care: vessel policy</b> — engineer-set (max continuous load, slamming avoidance), applied under every plan. Wear shown as an output on each plan.
     </div>
-    <div class="conf">Twin v0 confidence: synthetic. On a real vessel these predictions carry live confidence intervals learned from telemetry.</div>
+    <div class="conf">Twin v0 confidence: provisional. On a real vessel these predictions carry live confidence intervals learned from telemetry.</div>
   </div>
 
   <div class="card transit-only" id="card-active">
@@ -154,7 +147,7 @@
 
   <div class="card transit-only" id="card-vessel">
     <h2>Vessel state — live setpoints & optimisation</h2>
-    <div id="vstate"></div>
+    <div id="vstate"><div class="conf">Loading…</div></div>
   </div>
 
   <div class="card" id="card-chat">
@@ -177,7 +170,8 @@
 
   <div class="card" id="card-plans">
       <h2>Recommended plans</h2>
-      <div id="plans"></div>
+      <div class="conf" id="planstatus" style="display:none"></div>
+      <div id="plans"><div class="conf">Loading passage plan…</div></div>
       <div class="baseline" id="basecard"></div>
   </div>
 
@@ -192,91 +186,24 @@
       <button id="startbtn" class="startbtn plan-only">BEGIN PASSAGE</button>
   </div>
 </div>
-<footer>Stingray Marine Technology — stingraymarinetechnology.com · prototype: vessel, chart and routing data synthetic, not for navigation. Recommendations advisory only; the captain retains full authority. © Stingray Marine Technology 2026</footer>
+<footer>Stingray Marine Technology — stingraymarinetechnology.com · prototype: chart data synthetic, vessel/routing/weather from a real Stingray planner API, not for navigation. Recommendations advisory only; the captain retains full authority. © Stingray Marine Technology 2026</footer>
 
-<script src="livewx.js"></script>
-<script id="core">
+<script id="shared">
 "use strict";
-/* ================= Stingray core (DOM-free) ================= */
+/* ================= Stingray shared (DOM-free) ================= */
 const D2R = Math.PI/180, NM_LAT = 60; // nm per degree latitude
 const PORTS = { antibes:{lat:43.55, lon:7.17, name:"Antibes"}, portocervo:{lat:41.13, lon:9.55, name:"Porto Cervo"} };
 const MIDLAT = 42.3, KLON = Math.cos(MIDLAT*D2R);
 function nmDist(a,b){ const dy=(b.lat-a.lat)*NM_LAT, dx=(b.lon-a.lon)*NM_LAT*KLON; return Math.hypot(dx,dy); }
 function bearing(a,b){ const dy=(b.lat-a.lat), dx=(b.lon-a.lon)*KLON; return (Math.atan2(dx,dy)/D2R+360)%360; }
-function lerp(a,b,t){ return a+(b-a)*t; }
 
-/* ---------- Synthetic weather scenarios ----------
-   field(lat,lon,tHours) -> {hs, wDir(from,deg), wSpd(kn), waveDir(from,deg)} */
-function gauss(x,c,w){ const d=(x-c)/w; return Math.exp(-d*d); }
-const SCENARIOS = {
-  mistral: (lat,lon,t)=>{
-    const decay = 0.45 + 0.55/(1+Math.exp((t-20)/5));           // gale eases after ~20h
-    const west  = gauss(lon,7.9,1.5)*gauss(lat,41.9,1.6);       // core west of Corsica
-    const lig   = 0.45*gauss(lon,8.6,1.6)*gauss(lat,43.2,0.9);  // Ligurian fetch
-    const boni  = 0.85*gauss(lon,9.05,0.45)*gauss(lat,41.32,0.22); // strait funnel
-    const lee   = (lon>9.15 && lat>41.4 && lat<43.05) ? 0.30 : 1.0; // Corsica lee
-    const hs = Math.min(4.2,(0.5 + 3.4*Math.max(west,lig,boni)*decay)*lee);
-    return { hs, wDir:315, wSpd:(8+30*Math.max(west,boni)*decay)*(lee<1?0.5:1), waveDir:315 };
-  },
-  calm: ()=>({ hs:0.5, wDir:200, wSpd:6, waveDir:220 }),
-  easterly: (lat,lon,t)=>{
-    const build = Math.min(1, 0.4+t/24);
-    const east  = gauss(lon,9.8,1.2)*gauss(lat,42.2,1.6);       // swell east of Corsica
-    const lee   = (lon<8.9 && lat>41.5 && lat<43.0) ? 0.35 : 1.0;
-    const hs = Math.min(3.2,(0.5+2.6*east*build)*lee);
-    return { hs, wDir:95, wSpd:(7+22*east*build)*(lee<1?0.6:1), waveDir:95 };
-  }
-};
+/* ---------- Chart no-go areas (marine reserves — advisory routing exclusions) ---------- */
+const NOGO = [
+  {name:"Réserve de Scandola",   latMin:42.30, latMax:42.42, lonMin:8.50, lonMax:8.65},
+  {name:"Îles Lavezzi reserve",  latMin:41.29, latMax:41.36, lonMin:9.21, lonMax:9.31}
+];
 
-/* ---------- Digital twin v0 (50m displacement, twin screw) ---------- */
-const TWIN = {
-  hotelLph: 42,                    // gensets + hotel
-  calmA: 0.152,                    // propulsion L/h = A * v^3 (fits ~260L/h prop @12kn)
-  co2PerL: 2.68,
-  fuelRate(v, hs, headingDeg, waveFromDeg, oneEngine){
-    let enc = Math.abs(((headingDeg - waveFromDeg)%360+540)%360 - 180); // 0=following,180=head
-    const headF = 0.25 + 0.75*Math.pow(enc/180, 1.6);                    // head seas worst for resistance
-    const added = 1 + 0.12*Math.pow(hs,1.5)*headF*(12/Math.max(v,6));
-    let prop = this.calmA*v*v*v*added;
-    if(oneEngine) prop *= (v<=12 ? 0.94 : 1+0.12*(v-12));                // single-engine: SFOC gain low speed, overload penalty above hull-efficient band
-    return this.hotelLph + prop;
-  },
-  comfortRate(v, hs, headingDeg, waveFromDeg){
-    let enc = Math.abs(((headingDeg - waveFromDeg)%360+540)%360 - 180);
-    const beamF = 0.35 + 0.65*Math.pow(Math.sin(enc*D2R),2)*1.4 + (enc>150?0.25:0); // beam worst, head bad
-    return Math.pow(hs,1.7)*beamF*(0.5+v/22);
-  },
-  wearRate(v, hs, headingDeg, waveFromDeg, oneEngine){
-    let enc = Math.abs(((headingDeg - waveFromDeg)%360+540)%360 - 180);
-    const slam = (enc>140 && hs>1.8 && v>13) ? 3.0*(hs-1.8)*(v-13) : 0;  // slamming penalty
-    const load = Math.pow(v/17,3)*1.2;                                   // time at high load
-    return load + slam + (oneEngine?0.15:0);                             // single-engine adds hours to one shaft
-  }
-};
-
-/* ---------- Corridors (stage centrelines, offsets bounded clear of land) ---------- */
-function seg(a,b,n){ const out=[]; for(let i=0;i<=n;i++) out.push({lat:lerp(a.lat,b.lat,i/n), lon:lerp(a.lon,b.lon,i/n)}); return out; }
-function corridorWest(){ // Antibes → west Corsica offing → Bonifacio strait → S of Lavezzi/N of Maddalena → Porto Cervo
-  const A=PORTS.antibes, B={lat:42.50,lon:8.25}, C={lat:41.55,lon:8.60},
-        D={lat:41.29,lon:9.08}, D2={lat:41.26,lon:9.40}, D3={lat:41.19,lon:9.55}, E=PORTS.portocervo;
-  const pts=[...seg(A,B,5), ...seg(B,C,3).slice(1), ...seg(C,D,2).slice(1), ...seg(D,D2,2).slice(1), ...seg(D2,D3,1).slice(1), ...seg(D3,E,1).slice(1)];
-  const maxOff=pts.map((p,i)=> (p.lat<41.6||i<2||i>pts.length-3)?1:3);   // tight in strait & at ports
-  return {name:"West via Bonifacio", pts, maxOff, offNm:5, side:"W"};
-}
-function corridorEast(){ // Antibes → round Cap Corse → east Corsica lee → Porto Cervo
-  const A=PORTS.antibes, B={lat:43.10,lon:9.42}, C={lat:42.30,lon:9.80}, D={lat:41.55,lon:9.80}, E=PORTS.portocervo;
-  const pts=[...seg(A,B,5), ...seg(B,C,3).slice(1), ...seg(C,D,3).slice(1), ...seg(D,E,2).slice(1)];
-  const maxOff=pts.map((p,i)=> (i<2||i>pts.length-3)?1:2);
-  return {name:"East of Corsica", pts, maxOff, offNm:5, side:"E"};
-}
-function offsetPoint(pts,i,k,offNm){ // lateral offset k steps, perpendicular to local track
-  const a=pts[Math.max(0,i-1)], b=pts[Math.min(pts.length-1,i+1)];
-  const dy=(b.lat-a.lat), dx=(b.lon-a.lon)*KLON, L=Math.hypot(dx,dy)||1e-9;
-  const px=-dy/L, py=dx/L; // unit perpendicular (in x=lonKLON, y=lat space)
-  return { lat:pts[i].lat + (py*k*offNm)/NM_LAT, lon:pts[i].lon + (px*k*offNm)/(NM_LAT*KLON) };
-}
-
-/* ---------- Coastline polygons (shared by chart renderer and optimiser land-avoidance) ---------- */
+/* ---------- Coastline polygons (shared by chart renderer) ---------- */
 const LAND={
   mainland:[
     [43.42,6.70],[43.50,6.95],[43.55,7.01],[43.54,7.13],[43.63,7.19],[43.69,7.29],[43.72,7.35],
@@ -301,115 +228,112 @@ const LAND={
   elba_w:[[42.81,10.10],[42.78,10.15],[42.73,10.15],[42.74,10.08],[42.78,10.06]],
   pianosa:[[42.36,10.08],[42.34,10.10],[42.33,10.06]]
 };
-function inLand(lat,lon){ // ray-cast point-in-polygon over all land masses
-  for(const key in LAND){ const poly=LAND[key]; let inside=false;
-    for(let i=0,j=poly.length-1;i<poly.length;j=i++){
-      const yi=poly[i][0],xi=poly[i][1],yj=poly[j][0],xj=poly[j][1];
-      if(((yi>lat)!==(yj>lat)) && lon < (xj-xi)*(lat-yi)/(yj-yi)+xi) inside=!inside;
-    }
-    if(inside) return true; }
-  return false;
-}
 
-/* ---------- Chart no-go areas (marine reserves — advisory routing exclusions) ---------- */
-const NOGO = [
-  {name:"Réserve de Scandola",   latMin:42.30, latMax:42.42, lonMin:8.50, lonMax:8.65},
-  {name:"Îles Lavezzi reserve",  latMin:41.29, latMax:41.36, lonMin:9.21, lonMax:9.31}
-];
-function inNogo(lat,lon){ return NOGO.some(b=> lat>=b.latMin&&lat<=b.latMax&&lon>=b.lonMin&&lon<=b.lonMax); }
-
-/* ---------- Leg evaluation & DP optimiser ---------- */
-function evalLeg(p,q,v,t0,wx,oneEngine){
-  const dist=nmDist(p,q), hrs=dist/v, hdg=bearing(p,q);
-  const m={lat:(p.lat+q.lat)/2, lon:(p.lon+q.lon)/2};
-  const w=wx(m.lat,m.lon,t0+hrs/2);
-  let nogo=0, land=0; // sample leg for exclusion-zone entry and land collision
-  for(const f of [0.15,0.3,0.45,0.6,0.75,0.9]){
-    const sl=lerp(p.lat,q.lat,f), sn=lerp(p.lon,q.lon,f);
-    if(inNogo(sl,sn)) nogo=1;
-    if(inLand(sl,sn)||inLand(q.lat,q.lon)) land=1;
-  }
-  return { hrs, nogo, land,
-    fuel: TWIN.fuelRate(v,w.hs,hdg,w.waveDir,oneEngine)*hrs,
-    comfort: TWIN.comfortRate(v,w.hs,hdg,w.waveDir)*hrs,
-    wear: TWIN.wearRate(v,w.hs,hdg,w.waveDir,oneEngine)*hrs,
-    maxHs: w.hs };
-}
-function dpRoute(corr,v,wx,weights,oneEngine){
-  const N=corr.pts.length, W=weights;
-  let states=new Map(); states.set(0,{cost:0,t:0,fuel:0,comfort:0,wear:0,maxHs:0,path:[0]});
-  for(let i=1;i<N;i++){
-    const next=new Map(), K=corr.maxOff[i];
-    for(let k=-K;k<=K;k++){
-      const q=offsetPoint(corr.pts,i,k,corr.offNm);
-      let best=null;
-      for(const [pk,s] of states){
-        if(Math.abs(pk-k)>1) continue; // limit turn rate
-        const p=offsetPoint(corr.pts,i-1,pk,corr.offNm);
-        const L=evalLeg(p,q,v,s.t,wx,oneEngine);
-        const c=s.cost + W.fuel*L.fuel + W.time*L.hrs*60 + W.comfort*L.comfort*30 + W.wear*L.wear*18 + L.nogo*50000 + L.land*1e7;
-        if(!best||c<best.cost) best={cost:c,t:s.t+L.hrs,fuel:s.fuel+L.fuel,comfort:s.comfort+L.comfort,
-          wear:s.wear+L.wear,maxHs:Math.max(s.maxHs,L.maxHs),path:[...s.path,k]};
-      }
-      if(best) next.set(k,best);
-    }
-    states=next;
-  }
-  const end=states.get(0)||[...states.values()].sort((a,b)=>a.cost-b.cost)[0];
-  const track=end.path.map((k,i)=>offsetPoint(corr.pts,i,k,corr.offNm));
-  const dist=track.reduce((s,p,i)=>i?s+nmDist(track[i-1],p):0,0);
-  return {...end, track, dist, v, corr:corr.name, side:corr.side, oneEngine};
-}
-function weightsFromSliders(econ,comf,wear){ // econ: 0=economy .. 100=schedule
-  // rough €-equivalent weighting: fuel ~€1/L, schedule value up to ~€25/min
-  return { fuel:(100-econ)/100*1.0+0.15, time:econ/100*25+0.5, comfort:comf/100*1.2, wear:wear/100 };
-}
-function optimise(scId,econ,comf,wear,latestH){ // latestH: max passage hours (ETA window), null = unconstrained
-  const wx=SCENARIOS[scId], W=weightsFromSliders(econ,comf,wear);
-  const cands=[];
-  for(const corr of [corridorWest(),corridorEast()])
-    for(const v of [10,11,12,13,14,15,16,17]){
-      const one = v<=11;
-      cands.push(dpRoute(corr,v,wx,W,one));
-    }
-  const score=r=> W.fuel*r.fuel + W.time*r.t*60 + W.comfort*r.comfort*30 + W.wear*r.wear*18;
-  cands.forEach(c=>c.score=score(c));
-  let pool = latestH ? cands.filter(c=>c.t<=latestH) : cands;
-  let missedWindow = false;
-  if(!pool.length){ missedWindow=true; pool=[...cands].sort((a,b)=>a.t-b.t).slice(0,4); } // nothing feasible: show fastest options
-  pool.sort((a,b)=> missedWindow ? a.t-b.t : score(a)-score(b));
-  const picks=[pool[0]];
-  for(const c of pool){ if(picks.length>=3) break;
-    if(picks.every(p=>p.side!==c.side||Math.abs(p.v-c.v)>=2)) picks.push(c); }
-  const baseline=dpRoute0(corridorWest(),14,wx); // do-nothing: centreline via Bonifacio @14kn
-  return {plans:picks, baseline, weights:W, missedWindow, latestH, cands};
-}
-
-/* ---------- Live weather field (from ingestion layer, see prototype/ingest/) ---------- */
-function makeLiveScenario(D){
-  const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
-  const at=(arr,ti,iy,ix)=>arr[ti][iy][ix];
-  return (lat,lon,t)=>{
-    const ti=clamp(Math.round(t),0,D.hours.length-1);
-    const fy=clamp((lat-D.lat0)/D.dlat,0,D.nlat-1.001), fx=clamp((lon-D.lon0)/D.dlon,0,D.nlon-1.001);
-    const y0=Math.floor(fy), x0=Math.floor(fx), wy=fy-y0, wx_=fx-x0;
-    const bi=A=> at(A,ti,y0,x0)*(1-wy)*(1-wx_) + at(A,ti,y0+1,x0)*wy*(1-wx_)
-               + at(A,ti,y0,x0+1)*(1-wy)*wx_   + at(A,ti,y0+1,x0+1)*wy*wx_;
-    return { hs:bi(D.hs), wSpd:bi(D.wspd),
-      wDir: at(D.wdir,ti,Math.round(fy),Math.round(fx)),      // nearest for circular quantities
-      waveDir: at(D.wavedir,ti,Math.round(fy),Math.round(fx)) };
-  };
-}
-function dpRoute0(corr,v,wx){ // no micro-routing — straight down the centreline
-  let t=0,fuel=0,comfort=0,wearAcc=0,maxHs=0; const track=corr.pts;
-  for(let i=1;i<track.length;i++){ const L=evalLeg(track[i-1],track[i],v,t,wx,false);
-    t+=L.hrs; fuel+=L.fuel; comfort+=L.comfort; wearAcc+=L.wear; maxHs=Math.max(maxHs,L.maxHs); }
-  const dist=track.reduce((s,p,i)=>i?s+nmDist(track[i-1],p):0,0);
-  return {t,fuel,comfort,wear:wearAcc,maxHs,track,dist,v,corr:corr.name,side:corr.side,oneEngine:false};
-}
 /* comfort/wear 0-10 display scale */
 function idx10(x,ref){ return Math.min(10, 10*x/ref); }
-if (typeof module!=="undefined") module.exports={optimise,SCENARIOS,TWIN,corridorWest,corridorEast,PORTS,nmDist,NOGO,inNogo,makeLiveScenario,LAND,inLand};
+
+/* ================= Stingray planner API client (ticket B2) =================
+   Deliberate, scoped exposure: GitHub Pages has no secret-injection
+   mechanism, this demo's data is synthetic/non-sensitive, and this
+   matches ticket B1's own "stopgap, not tenancy" framing for Basic Auth.
+   Rotate here if credentials change. API_BASE must be the deployed
+   instance's HTTPS URL once this page itself is served over HTTPS
+   (GitHub Pages) -- browsers block "mixed content" (an HTTPS page
+   fetching an HTTP resource) -- see prototype/deploy/HOSTING.md. */
+const API_BASE = "http://localhost:8000";
+const API_AUTH = { user: "stingray-demo", pass: "REPLACE-ME-ROTATE-OFTEN" };
+
+class ApiError extends Error {
+  constructor(kind, message){ super(message); this.kind = kind; }
+}
+function sleep(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
+function _authHeader(){ return "Basic " + btoa(`${API_AUTH.user}:${API_AUTH.pass}`); }
+
+async function apiFetch(method, path, body){
+  let resp;
+  try{
+    resp = await fetch(API_BASE + path, {
+      method,
+      headers: { "Authorization": _authHeader(), ...(body!==undefined?{"Content-Type":"application/json"}:{}) },
+      body: body!==undefined ? JSON.stringify(body) : undefined,
+    });
+  }catch(e){
+    throw new ApiError("network", "Can't reach the planning service — check your connection and the API address.");
+  }
+  if(resp.status===401) throw new ApiError("auth", "Planning service rejected the demo credentials — contact Stingray to refresh them.");
+  if(resp.status===404) throw new ApiError("not_found", "That plan is no longer available — try again.");
+  if(resp.status===422){
+    const eb = await resp.json().catch(()=>({message:"invalid request"}));
+    throw new ApiError("invalid_request", eb.message || "invalid request");
+  }
+  if(resp.status===429){
+    const eb = await resp.json().catch(()=>({message:"planning service is busy"}));
+    throw new ApiError("busy", eb.message || "planning service is busy");
+  }
+  if(!resp.ok) throw new ApiError("network", `Planning service returned an unexpected error (${resp.status}).`);
+  const len = resp.headers.get("content-length");
+  if(len==="0") return null;
+  return resp.json();
+}
+
+/* PlanResultOut -> the old flat vocabulary (docs/plans/ticket-B2.md design 1) --
+   the ~450 lines of render/chat code below barely change because of this. */
+function mapLatLon(p){ return {lat:p.lat_deg, lon:p.lon_deg}; }
+function mapCandidate(c){
+  return {
+    t:c.duration_h, fuel:c.fuel_kg, corr:c.corridor_name, v:c.speed_kn,
+    comfort:c.comfort_index, wear:c.wear_index, maxHs:c.max_hs_m,
+    oneEngine:c.active_engines===1, side:c.side, dist:c.distance_nm,
+    score:c.score_eur, track:c.track.map(mapLatLon),
+  };
+}
+function mapPlanResult(result, latestH){
+  return {
+    plans: result.candidates.map(mapCandidate),
+    baseline: mapCandidate(result.baseline),
+    weights: result.weights,
+    missedWindow: result.missed_window,
+    latestH,
+  };
+}
+
+async function optimise(econ, comf, latestH){
+  const submitted = await apiFetch("POST", "/v1/plans", { pace: econ, comfort: comf, latest_arrival_h: latestH });
+  const deadline = Date.now() + 90_000;
+  while(Date.now() < deadline){
+    const rec = await apiFetch("GET", `/v1/plans/${submitted.job_id}`);
+    if(rec.status==="done") return mapPlanResult(rec.result, latestH);
+    if(rec.status==="failed") throw new ApiError("job_failed", rec.error?.message ?? "planning failed");
+    await sleep(1500);
+  }
+  throw new ApiError("timeout", "planning is taking longer than expected");
+}
+
+/* ---------- Weather-field snapshots (drawWx's heatmap/wind layer, ticket B2 amendment) ----------
+   GET /v1/weather/field?h=N -- a downsampled grid at one valid-time,
+   quantized server-side to the nearest hour and ETag-cached, so a scrub
+   gesture revisiting the same hour is a cheap 304. Opportunistic: a
+   failed fetch degrades to "no heatmap this frame", never blocks or
+   errors the rest of the chart/plan render. */
+const _wxFieldCache = new Map(); // quantized hour -> {etag, data}
+async function fetchWeatherField(h){
+  const hq = Math.round(h);
+  const cached = _wxFieldCache.get(hq);
+  const headers = { "Authorization": _authHeader() };
+  if(cached) headers["If-None-Match"] = cached.etag;
+  let resp;
+  try{
+    resp = await fetch(`${API_BASE}/v1/weather/field?h=${hq}`, { headers });
+  }catch(e){
+    return cached ? cached.data : null;
+  }
+  if(resp.status===304 && cached) return cached.data;
+  if(!resp.ok) return cached ? cached.data : null;
+  const data = await resp.json();
+  const etag = resp.headers.get("ETag");
+  if(etag) _wxFieldCache.set(hq, {etag, data});
+  return data;
+}
 </script>
 
 <script>
@@ -419,7 +343,7 @@ const cv=document.getElementById("map"), ctx=cv.getContext("2d");
 const X=lon=>(lon-MAP.lonMin)/(MAP.lonMax-MAP.lonMin)*cv.width;
 const Y=lat=>cv.height-(lat-MAP.latMin)/(MAP.latMax-MAP.latMin)*cv.height;
 
-/* Coastlines: LAND is defined in the core script (shared with the optimiser's land-avoidance). */
+/* Coastlines: LAND is defined in the shared script. */
 /* ---------- Chart layer: bathymetry, soundings, TSS, reserves ---------- */
 let _bathy=null;
 function distToLandNm(lat,lon){
@@ -494,23 +418,29 @@ function drawChartOverlays(){
   }
   ctx.restore();
 }
-function drawWx(scId,t){
+/* ---------- Weather heatmap + wind layer (ticket B2: served by GET /v1/weather/field) ---------- */
+async function drawWx(t){
   if(!_bathy) buildBathy();
   ctx.drawImage(_bathy,0,0);
-  const wx=SCENARIOS[scId], step=10;
-  for(let px=0;px<cv.width;px+=step) for(let py=0;py<cv.height;py+=step){
-    const lon=MAP.lonMin+px/cv.width*(MAP.lonMax-MAP.lonMin);
-    const lat=MAP.latMin+(cv.height-py)/cv.height*(MAP.latMax-MAP.latMin);
-    const h=wx(lat,lon,t).hs;
-    if(h<0.35) continue;                       // keep calm water as clean chart
+  const field = await fetchWeatherField(t);
+  if(!field) return; // opportunistic -- chart still shows bathymetry/land/routes without it
+  const cellW = cv.width/field.nlon, cellH = cv.height/field.nlat;
+  for(let i=0;i<field.nlat;i++) for(let j=0;j<field.nlon;j++){
+    const h = field.hs_m[i][j];
+    if(h===null || h<0.35) continue; // keep calm/masked water as clean chart
+    const lat = field.lat0_deg + i*field.dlat_deg, lon = field.lon0_deg + j*field.dlon_deg;
+    const px = X(lon)-cellW/2, py = Y(lat)-cellH/2;
     const u=Math.min(1,h/4);
     ctx.fillStyle=`rgba(${Math.round(30+225*u)},${Math.round(140-80*u)},${Math.round(220-160*u)},${(0.10+0.42*u).toFixed(2)})`;
-    ctx.fillRect(px,py,step,step);
+    ctx.fillRect(px,py,cellW+1,cellH+1);
   }
-  // wind arrows
+  // wind arrows -- every 3rd grid point keeps a similar visual density to the old continuous sampling
   ctx.strokeStyle="rgba(40,70,100,.55)"; ctx.lineWidth=1;
-  for(let lon=MAP.lonMin+.25; lon<MAP.lonMax; lon+=.55) for(let lat=MAP.latMin+.25; lat<MAP.latMax; lat+=.42){
-    const w=wx(lat,lon,t); const a=(w.wDir+180)*Math.PI/180, L=3+w.wSpd*.45;
+  for(let i=0;i<field.nlat;i+=3) for(let j=0;j<field.nlon;j+=3){
+    const spd=field.wind_speed_kn[i][j], dir=field.wind_from_deg[i][j];
+    if(spd===null||dir===null) continue;
+    const lat = field.lat0_deg + i*field.dlat_deg, lon = field.lon0_deg + j*field.dlon_deg;
+    const a=(dir+180)*Math.PI/180, L=3+spd*.45;
     const x=X(lon), y=Y(lat), dx=Math.sin(a)*L, dy=-Math.cos(a)*L;
     ctx.beginPath(); ctx.moveTo(x-dx/2,y-dy/2); ctx.lineTo(x+dx/2,y+dy/2);
     ctx.moveTo(x+dx/2,y+dy/2); ctx.lineTo(x+dx/2-dx*.3+dy*.2, y+dy/2-dy*.3-dx*.2); ctx.stroke();
@@ -558,25 +488,83 @@ function why(r,base,res){
   if(r.side==="W"&&r.maxHs<1.5) parts.push("takes the direct strait route in light conditions");
   if(r.side==="W"&&r.maxHs>=1.5) parts.push(`accepts ${r.maxHs.toFixed(1)}m max seas via Bonifacio for the shorter track`);
   if(r.v<=11) parts.push(`single-engine at ${r.v}kn in the efficient band`);
-  if(r.fuel<base.fuel) parts.push(`saves ${Math.round(base.fuel-r.fuel)}L vs baseline`);
+  if(r.fuel<base.fuel) parts.push(`saves ${Math.round(base.fuel-r.fuel)}kg vs baseline`);
   if(r.t<base.t) parts.push(`arrives ${fmtH(base.t-r.t)} earlier`);
   if(idx10(r.comfort,res.comfRef)<idx10(base.comfort,res.comfRef)*.6) parts.push("markedly lower motion dose");
   return parts.length?parts.join("; ")+".":"balanced trade-off across objectives.";
 }
-function render(){
-  const scId=document.getElementById("scenario").value;
-  const econ=+document.getElementById("w_econ").value, comf=+document.getElementById("w_comf").value;
-  document.getElementById("v_econ").textContent="";
-  document.getElementById("v_comf").textContent="";
-  const ab=document.getElementById("arriveby").value;
-  const res=optimise(scId,econ,comf,WEAR_POLICY, ab? +ab : null);
-  res.comfRef=Math.max(res.baseline.comfort,...res.plans.map(p=>p.comfort),1);
-  const wearRef=Math.max(res.baseline.wear,...res.plans.map(p=>p.wear),1);
-  window._res=res;
+
+/* ---------- Bootstrap + plan request/render split (ticket B2) ----------
+   requestPlan() submits a real job and updates window._res; renderUI()
+   is pure DOM/canvas rendering from the cached window._res, no network
+   -- see docs/plans/ticket-B2.md design 2 for why (plan-card clicks and
+   the time-scrub slider used to wastefully re-run the whole synchronous
+   optimise() for no reason; now that it's a real network call, only the
+   sliders/ETA-window/presets actually submit a new job). */
+let VESSEL_CO2_PER_KG = null;
+let _reqGen = 0, _drawGen = 0;
+
+function econVal(){ return +document.getElementById("w_econ").value; }
+function comfVal(){ return +document.getElementById("w_comf").value; }
+function latestHVal(){ const ab=document.getElementById("arriveby").value; return ab? +ab : null; }
+
+function showLoading(on){
+  const el=document.getElementById("planstatus");
+  el.style.display = on ? "block" : "none";
+  el.textContent = "Computing plan…";
+}
+function errorCopy(err){
+  const copy = {
+    network: "Can't reach the planning service — check your connection and the API address.",
+    auth: "Planning service rejected the demo credentials — contact Stingray to refresh them.",
+    invalid_request: err.message,
+    job_failed: err.message,
+    timeout: "Planning is taking longer than expected — try again in a moment.",
+    busy: "Planning service is busy right now — try again in a moment.",
+    not_found: "That plan is no longer available — try again.",
+  };
+  return copy[err.kind] || err.message || "Something went wrong.";
+}
+function showError(err){
+  const wrap = document.getElementById("plans");
+  const warn=document.createElement("div");
+  warn.style.cssText="border:1px solid var(--bad);color:var(--bad);border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:10px";
+  warn.textContent = errorCopy(err);
+  wrap.prepend(warn);
+}
+
+async function requestPlan(){
+  const myGen = ++_reqGen;
+  showLoading(true);
+  try{
+    const res = await optimise(econVal(), comfVal(), latestHVal());
+    if(myGen!==_reqGen) return; // superseded by a newer request -- drop silently
+    res.comfRef=Math.max(res.baseline.comfort,...res.plans.map(p=>p.comfort),1);
+    res.wearRef=Math.max(res.baseline.wear,...res.plans.map(p=>p.wear),1);
+    window._res=res; window._sel=0;
+    showLoading(false);
+    await renderUI();
+  }catch(err){
+    if(myGen!==_reqGen) return;
+    showLoading(false);
+    if(window._res){
+      await renderUI(); // keep the last successful result visible underneath the error
+    }else{
+      document.getElementById("plans").innerHTML="";
+    }
+    showError(err);
+  }
+}
+
+async function renderUI(){
+  const myGen = ++_drawGen;
+  const res = window._res; if(!res) return;
   const t=+document.getElementById("tscrub").value;
   document.getElementById("tlab").textContent=t;
   ctx.clearRect(0,0,cv.width,cv.height);
-  drawWx(scId,t); drawLand(); drawChartOverlays(); drawRoutes(res,window._sel||0,t);
+  await drawWx(t);
+  if(myGen!==_drawGen) return; // superseded by a newer scrub/render before the weather fetch resolved
+  drawLand(); drawChartOverlays(); drawRoutes(res,window._sel||0,t);
   const B=res.baseline, wrap=document.getElementById("plans"); wrap.innerHTML="";
   if(res.missedWindow){
     const warn=document.createElement("div");
@@ -585,12 +573,12 @@ function render(){
     wrap.appendChild(warn);
   }
   res.plans.forEach((r,i)=>{
-    const dF=r.fuel-B.fuel, dT=r.t-B.t, co2=r.fuel*TWIN.co2PerL;
-    const cI=idx10(r.comfort,res.comfRef), wI=idx10(r.wear,wearRef);
+    const dF=r.fuel-B.fuel, dT=r.t-B.t, co2=r.fuel*(VESSEL_CO2_PER_KG||0);
+    const cI=idx10(r.comfort,res.comfRef), wI=idx10(r.wear,res.wearRef);
     const el=document.createElement("div"); el.className="plan"+((window._sel||0)===i?" sel":"");
     el.innerHTML=`<h3><span class="dot" style="background:${COLORS[i]}"></span>${"ABC"[i]} — ${r.corr} · ${r.v} kn ${r.oneEngine?"· single engine":""}</h3>
       <div class="grid">
-        <span class="k">Fuel</span><span class="v">${Math.round(r.fuel).toLocaleString()} L <span class="${dF<=0?"delta-good":"delta-bad"}">(${dF>0?"+":""}${Math.round(dF)})</span></span>
+        <span class="k">Fuel</span><span class="v">${Math.round(r.fuel).toLocaleString()} kg <span class="${dF<=0?"delta-good":"delta-bad"}">(${dF>0?"+":""}${Math.round(dF)})</span></span>
         <span class="k">CO₂</span><span class="v">${(co2/1000).toFixed(1)} t</span>
         <span class="k">Passage</span><span class="v">${fmtH(r.t)} · ETA ${eta(r.t)} <span class="${dT<=0?"delta-good":"delta-bad"}">(${dT>0?"+":""}${fmtH(Math.abs(dT))})</span></span>
         <span class="k">Distance</span><span class="v">${Math.round(r.dist)} nm</span>
@@ -601,59 +589,85 @@ function render(){
         ${res.latestH?`<span class="k">ETA window</span><span class="v ${r.t<=res.latestH?"delta-good":"delta-bad"}">${r.t<=res.latestH?"✓ meets":"✗ misses"} ${eta(res.latestH)}</span>`:""}
       </div>
       <div class="why">${why(r,B,res)}</div>`;
-    el.onclick=()=>{window._sel=i; render();};
+    el.onclick=()=>{window._sel=i; renderUI();};
     wrap.appendChild(el);
   });
   document.getElementById("basecard").innerHTML=
-    `<b>Do-nothing baseline</b> (direct via Bonifacio, 14 kn, no routing): ${Math.round(B.fuel).toLocaleString()} L · ${fmtH(B.t)} · max seas ${B.maxHs.toFixed(1)} m`;
-  renderVessel(res, scId, t);
+    `<b>Do-nothing baseline</b> (direct via Bonifacio, 14 kn, no routing): ${Math.round(B.fuel).toLocaleString()} kg · ${fmtH(B.t)} · max seas ${B.maxHs.toFixed(1)} m`;
+  renderVessel(res, t);
   renderActive(res, t);
   const sb=document.getElementById("startbtn"), sp=res.plans[window._sel||0];
   sb.textContent=`BEGIN PASSAGE — PLAN ${"ABC"[window._sel||0]} · ${sp.v} KN · ETA ${eta(sp.t)}`;
   sb.disabled=!!res.missedWindow;
   sb.style.opacity=res.missedWindow?0.4:1;
-  document.querySelector("header .tag").textContent = scId==="live" ? "LIVE WEATHER · SYNTHETIC VESSEL" : "SYNTHETIC DATA";
   document.getElementById("poslab").textContent="";
   // proactive chat suggestion when the recommendation changes
-  const sig=res.plans[0].side+res.plans[0].v+"|"+scId+"|"+(res.latestH||"");
+  const sig=res.plans[0].side+res.plans[0].v+"|"+(res.latestH||"");
   if(window._lastSig!==sig){
     window._lastSig=sig;
     const p=res.plans[0], d=Math.round(res.baseline.fuel-p.fuel);
-    chatPush("ai",`<b>Plan A suggested:</b> ${p.corr} at ${p.v} kn${p.oneEngine?", single engine":""} — ETA ${eta(p.t)}, ${Math.round(p.fuel).toLocaleString()} L${d>0?` (saves ${d.toLocaleString()} L vs baseline)`:""}, max seas ${p.maxHs.toFixed(1)} m. Ask me why, or set a constraint.`);
+    chatPush("ai",`<b>Plan A suggested:</b> ${p.corr} at ${p.v} kn${p.oneEngine?", single engine":""} — ETA ${eta(p.t)}, ${Math.round(p.fuel).toLocaleString()} kg${d>0?` (saves ${d.toLocaleString()} kg vs baseline)`:""}, max seas ${p.maxHs.toFixed(1)} m. Ask me why, or set a constraint.`);
   }
 }
-/* ---------- Vessel state panel: per-parameter optimality for the current mission mix ---------- */
+
+async function bootstrap(){
+  try{
+    const [vessel, health] = await Promise.all([
+      apiFetch("GET", "/v1/vessel"),
+      apiFetch("GET", "/v1/health"),
+    ]);
+    VESSEL_CO2_PER_KG = vessel.co2_per_kg_fuel;
+    updateWeatherProvenance(health);
+    document.querySelector("header .tag").textContent = "REAL WEATHER · PROVISIONAL VESSEL MODEL";
+    setInterval(refreshHealth, 5*60_000);
+    await requestPlan();
+  }catch(err){
+    document.querySelector("header .tag").textContent = "CONNECTION FAILED";
+    document.getElementById("wxprov").textContent = "Weather: unavailable";
+    const wrap = document.getElementById("plans"); wrap.innerHTML="";
+    const box=document.createElement("div");
+    box.style.cssText="border:1px solid var(--bad);color:var(--bad);border-radius:8px;padding:12px;font-size:13px;text-align:center";
+    box.innerHTML = `${errorCopy(err)}<br><button id="retryboot" style="margin-top:10px;background:var(--acc);color:#062030;border:0;border-radius:8px;padding:8px 16px;font-weight:650;cursor:pointer">Retry connection</button>`;
+    wrap.appendChild(box);
+    document.getElementById("retryboot").addEventListener("click", bootstrap);
+  }
+}
+function updateWeatherProvenance(health){
+  document.getElementById("wxprov").textContent =
+    `Weather: ${health.weather_source || "unknown source"} · cycle ${health.weather_cycle || "—"} · fetched ${health.weather_fetched || "—"}`;
+}
+async function refreshHealth(){
+  try{ updateWeatherProvenance(await apiFetch("GET","/v1/health")); }catch(e){ /* opportunistic -- keep the stale line rather than erroring */ }
+}
+
+/* ---------- Vessel state panel: per-parameter optimality for the current mission mix ----------
+   Ticket B2: reworked to compare against only this job's own
+   candidates+baseline (2-4 points), not the full internal search sweep
+   the old synthetic brain kept in `cands` -- the job-shaped API doesn't
+   expose that (see docs/plans/ticket-B2.md design 6). Accepted, known
+   precision loss: with this few points, the same-side comparison can
+   sometimes contain only the chosen candidate itself and read as
+   trivially "100% optimal" -- expected, not a bug. */
 function vstateRows(res, r){
   const clamp=(x)=>Math.max(0,Math.min(1,x));
-  const hsAvg=r.maxHs*0.55;
-  // speed: best achievable score on this corridor vs chosen
-  const same=res.cands.filter(c=>c.side===r.side);
+  const pool=[...res.plans, res.baseline];
+  const same=pool.filter(c=>c.side===r.side);
   const bestScore=Math.min(...same.map(c=>c.score));
-  const bestV=same.find(c=>c.score===bestScore).v;
+  const bestCand=same.find(c=>c.score===bestScore); const bestV=bestCand.v;
   const pSpeed=clamp(bestScore/r.score);
-  // engine config: chosen vs alternative at this speed & sea state
-  const f1=TWIN.fuelRate(r.v,hsAvg,180,315,true), f2=TWIN.fuelRate(r.v,hsAvg,180,315,false);
-  const chosenF=r.oneEngine?f1:f2, pConf=clamp(Math.min(f1,f2)/chosenF);
   // engine load: per-engine % of MCR, sweet band 55–85%
   const load=Math.min(115,Math.pow(r.v/17.5,3)*100*(r.oneEngine?2:1));
   const pLoad=clamp(1-Math.max(0, load<55?(55-load):(load>85?load-85:0))/40);
-  // sea-state exposure vs best available among all candidates
-  const minHs=Math.min(...res.cands.map(c=>c.maxHs));
+  // sea-state exposure vs calmest available among the shown candidates+baseline
+  const minHs=Math.min(...pool.map(c=>c.maxHs));
   const pSea=r.maxHs>0.2?clamp(minHs/r.maxHs):1;
-  // average fuel rate vs calm-water rate at same speed/config
-  const actual=r.fuel/r.t, calm=TWIN.fuelRate(r.v,0.3,0,0,r.oneEngine);
-  const pFuel=clamp(calm/actual);
   return [
     {name:"Speed setpoint", val:`${r.v} kn`, p:pSpeed,
      note:pSpeed>0.98?"optimal for current mission mix":`${bestV} kn scores better on this routing`},
-    {name:"Engine configuration", val:r.oneEngine?"single engine":"twin engine", p:pConf,
-     note:pConf>0.98?"most efficient config at this speed":"config penalty at this speed/sea state"},
     {name:"Engine load", val:`${Math.round(load)}% MCR`, p:pLoad,
      note:load<55?"below efficient band — poor SFOC region":(load>85?"high load — elevated wear rate":"inside 55–85% sweet band")},
     {name:"Sea-state exposure", val:`${r.maxHs.toFixed(1)} m max`, p:pSea,
      note:pSea>0.9?"near minimum achievable this passage":"calmer routing available at other objectives' expense"},
-    {name:"Added resistance", val:`${Math.round(actual)} L/h avg`, p:pFuel,
-     note:`${Math.round((actual/calm-1)*100)}% above calm-water burn at ${r.v} kn`},
     {name:"Trim / ballast", val:"—", p:null, note:"no sensor feed — using vessel priors"},
     {name:"Stabiliser mode", val:"—", p:null, note:"no sensor feed — using vessel priors"}
   ];
@@ -689,14 +703,22 @@ function tileHTML(row){
     <div class="note">${row.note}</div></div>`;
 }
 function pCol(p){ return p===null?"#3a4c62":(p>=0.9?"#3ddc84":p>=0.7?"#e7b935":"#ef6a5a"); }
-function renderVessel(res, scId, t){
+function renderVessel(res, t){
   const r=res.plans[window._sel||0], rows=vstateRows(res,r);
-  const best=Math.min(...res.cands.map(c=>c.score)), pAll=Math.max(0,Math.min(1,best/r.score));
+  const pool=[...res.plans, res.baseline];
+  const best=Math.min(...pool.map(c=>c.score)), pAll=Math.max(0,Math.min(1,best/r.score));
   const overall={name:"Overall — mission fit", val:`${Math.round(pAll*100)}%`, p:pAll,
     note:pAll>=0.99?"optimum plan for the current slider mix":"a higher-scoring plan exists — see recommendations"};
   const {pos,hdg}=posAtTime(r,Math.min(t,r.t-0.1));
-  const w=SCENARIOS[scId](pos.lat,pos.lon,t);
-  const thW=((w.waveDir-hdg)%360+360)%360, thA=((w.wDir-hdg)%360+360)%360;
+  // Ticket B2: no per-position/per-time weather query exists server-side
+  // (the job-shaped API deliberately doesn't expose ad-hoc sampling) --
+  // proxy the sea state from this candidate's own real max_hs_m, with a
+  // clearly-arbitrary direction rather than an invented position-varying
+  // one. Feeds only the illustrative "live" animation already labelled
+  // below as simulated -- no wind speed/direction is shown here at all
+  // (there is no equivalent real value to show).
+  const w = { hs: r.maxHs, waveDir: (hdg+225)%360 };
+  const thW=((w.waveDir-hdg)%360+360)%360;
   const rpm=Math.round(600+850*Math.pow(r.v/14,1.5));
   const alt=nextAlteration(r,Math.min(t,r.t-0.1));
   // simulated live feed: sea-state-driven yaw, speed loss and rpm hunt (deterministic in t, so scrubbing replays)
@@ -725,7 +747,7 @@ function renderVessel(res, scId, t){
   <div class="envlab" style="margin:-4px 0 10px">Live values simulated for demo — production reads NMEA 2000 / engine bus in real time</div>`;
   const arrow=(th,R,col,sc)=>{ const x=125+R*Math.sin(th*Math.PI/180), y=175-R*Math.cos(th*Math.PI/180);
     return `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)}) rotate(${(th+180).toFixed(0)}) scale(${sc})"><path d="M0,-11 L7,5 L-7,5 Z" fill="${col}"/></g>`; };
-  const engFill=pCol(rows[2].p), hullStroke=pCol(rows[4].p), ringCol=pCol(rows[3].p);
+  const engFill=pCol(rows[1].p), ringCol=pCol(rows[2].p), hullStroke=pCol(overall.p);
   const svg=`
   <svg viewBox="0 0 250 350" style="display:block;margin:0 auto;max-height:330px">
     <circle cx="125" cy="175" r="112" fill="none" stroke="${ringCol}" stroke-opacity=".45" stroke-dasharray="3,5"/>
@@ -741,18 +763,17 @@ function renderVessel(res, scId, t){
     <rect x="82" y="192" width="9" height="13" rx="2" fill="#22344c" stroke="#3a4c62"/>
     <rect x="159" y="192" width="9" height="13" rx="2" fill="#22344c" stroke="#3a4c62"/>
     ${w.hs>=0.3?arrow(thW,132,"#4aa3d8",Math.min(1.5,0.6+w.hs/3)):""}
-    ${arrow(thA,132,"#8fb4cc",0.55)}
     <text x="125" y="24" font-size="9" fill="#7e93ab" text-anchor="middle">M/Y 50m · heading-up</text>
   </svg>
-  <div class="envlab">COG ${Math.round(hdg)}° · ${r.v} kn · seas ${w.hs.toFixed(1)} m from ${relDesc(thW)} · wind ${Math.round(w.wSpd)} kn from ${relDesc(thA)}</div>`;
+  <div class="envlab">COG ${Math.round(hdg)}° · ${r.v} kn · seas ${w.hs.toFixed(1)} m from ${relDesc(thW)}</div>`;
   document.getElementById("vstate").innerHTML= setrow +
     `<div class="vwrap">
-       <div class="vside">${tileHTML(rows[0])}${tileHTML(rows[2])}${tileHTML(rows[4])}</div>
+       <div class="vside">${tileHTML(rows[0])}${tileHTML(rows[1])}</div>
        <div>${svg}</div>
-       <div class="vside">${tileHTML(rows[1])}${tileHTML(rows[3])}${tileHTML(overall)}</div>
+       <div class="vside">${tileHTML(rows[2])}${tileHTML(overall)}</div>
      </div>
-     <div class="vbottom">${tileHTML(rows[5])}${tileHTML(rows[6])}
-       <div class="vtile"><div class="name">CO₂ this passage</div><div class="val">${(r.fuel*TWIN.co2PerL/1000).toFixed(1)} t</div>
+     <div class="vbottom">${tileHTML(rows[3])}${tileHTML(rows[4])}
+       <div class="vtile"><div class="name">CO₂ this passage</div><div class="val">${(r.fuel*(VESSEL_CO2_PER_KG||0)/1000).toFixed(1)} t</div>
          <span class="bar"><i style="width:${Math.min(100,Math.round(r.fuel/res.baseline.fuel*100))}%;background:${r.fuel<=res.baseline.fuel?"var(--good)":"var(--bad)"}"></i></span>
          <div class="note">${r.fuel<=res.baseline.fuel?Math.round((1-r.fuel/res.baseline.fuel)*100)+"% below do-nothing baseline":"above baseline — schedule priority"}</div></div>
      </div>`;
@@ -765,7 +786,7 @@ function renderActive(res,t){
       <span class="k">Departed</span><span class="v">08:00</span>
       <span class="k">ETA</span><span class="v">${eta(r.t)}</span>
       <span class="k">Progress</span><span class="v">${Math.round(prog*100)}% · ${Math.round(r.dist*prog)}/${Math.round(r.dist)} nm</span>
-      <span class="k">Fuel vs plan</span><span class="v">${Math.round(r.fuel*prog).toLocaleString()} / ${Math.round(r.fuel).toLocaleString()} L</span>
+      <span class="k">Fuel vs plan</span><span class="v">${Math.round(r.fuel*prog).toLocaleString()} / ${Math.round(r.fuel).toLocaleString()} kg</span>
       <span class="k">Max seas ahead</span><span class="v">${r.maxHs.toFixed(1)} m</span>
     </div>
     <span class="bar" style="margin-top:8px"><i style="width:${Math.round(prog*100)}%;background:var(--acc)"></i></span>
@@ -778,9 +799,9 @@ function chatPush(who,txt){
   while(m.children.length>40) m.removeChild(m.firstChild);
   m.scrollTop=m.scrollHeight;
 }
-function answerChat(qRaw){
+async function answerChat(qRaw){
   const res=window._res; if(!res) return "One moment — still computing.";
-  const r=res.plans[window._sel||0], B=res.baseline, scId=document.getElementById("scenario").value;
+  const r=res.plans[window._sel||0], B=res.baseline;
   const q=qRaw.toLowerCase();
   const m=q.match(/arrive\s*(?:by|before)?\s*(\d{1,2})[:.]?(\d{2})?/);
   if(m){
@@ -789,50 +810,55 @@ function answerChat(qRaw){
     let opt=[...sel.options].find(o=>o.value==String(Math.round(win)));
     if(!opt){ opt=document.createElement("option"); opt.value=Math.round(win*10)/10;
       opt.textContent=`${m[1].padStart(2,"0")}:${m[2]||"00"} (custom)`; sel.appendChild(opt); }
-    sel.value=opt.value; window._sel=0; render();
+    sel.value=opt.value;
+    await requestPlan();
     const nr=window._res;
     return nr.missedWindow
       ? `No plan makes ${m[1].padStart(2,"0")}:${m[2]||"00"} in this weather — fastest passage is ${fmtH(nr.plans[0].t)} (ETA ${eta(nr.plans[0].t)}). Consider an earlier departure.`
-      : `ETA window set. Plan A now: ${nr.plans[0].corr} at ${nr.plans[0].v} kn, ETA ${eta(nr.plans[0].t)} — ${Math.round(nr.plans[0].fuel).toLocaleString()} L.`;
+      : `ETA window set. Plan A now: ${nr.plans[0].corr} at ${nr.plans[0].v} kn, ETA ${eta(nr.plans[0].t)} — ${Math.round(nr.plans[0].fuel).toLocaleString()} kg.`;
   }
   if(/why|route|east|west|corridor/.test(q)) return `Plan ${"ABC"[window._sel||0]} ${why(r,B,res)}`;
   if(/fuel|burn|litre|liter|consum|cost/.test(q)){
     const d=r.fuel-B.fuel;
-    return `${Math.round(r.fuel).toLocaleString()} L for the passage (${Math.round(r.fuel/r.t)} L/h average) — ${d<=0?Math.abs(Math.round(d)).toLocaleString()+" L less than":Math.round(d).toLocaleString()+" L more than"} the do-nothing baseline. CO₂: ${(r.fuel*TWIN.co2PerL/1000).toFixed(1)} t.`;
+    return `${Math.round(r.fuel).toLocaleString()} kg for the passage (${Math.round(r.fuel/r.t)} kg/h average) — ${d<=0?Math.abs(Math.round(d)).toLocaleString()+" kg less than":Math.round(d).toLocaleString()+" kg more than"} the do-nothing baseline. CO₂: ${(r.fuel*(VESSEL_CO2_PER_KG||0)/1000).toFixed(1)} t.`;
   }
   if(/rough|comfort|motion|seas|swell|sick|guest/.test(q)){
-    const wx=SCENARIOS[scId]; let worst={hs:0}, wt=0;
-    for(let tt=0;tt<r.t;tt+=1){ const {pos}=posAtTime(r,tt); const w=wx(pos.lat,pos.lon,tt);
-      if(w.hs>worst.hs){worst={hs:w.hs,pos}; wt=tt;} }
-    const where=worst.pos ? (worst.pos.lat>42.8?"crossing the Ligurian":worst.pos.lon<9.0?"west of Corsica":worst.pos.lon>9.6?"in the Tyrrhenian":"near the Bonifacio approaches") : "en route";
-    return `Peak seas on this plan: ${worst.hs.toFixed(1)} m, ${where}, about ${Math.round(wt)}h out (${eta(wt)}). ${r.maxHs<1.2?"A comfortable passage throughout.":"If guests are aboard, raising Comfort priority will trade time or fuel for lower motion."}`;
+    // Ticket B2: reports this plan's own real max_hs_m directly rather
+    // than walking the track for a per-position peak -- there's no
+    // per-leg sea-state field in the new API to reconstruct "where" from
+    // (checked LegTargetModel; a real, accepted information loss, see
+    // docs/plans/ticket-B2.md design 5b).
+    return `Peak seas on this plan: ${r.maxHs.toFixed(1)} m. ${r.maxHs<1.2?"A comfortable passage throughout.":"If guests are aboard, raising Comfort priority will trade time or fuel for lower motion."}`;
   }
   if(/wear|engine|maintenance|fatigue|machinery|slam/.test(q))
     return `Wear index ${(r.wear/r.t).toFixed(1)}/h average: ${r.oneEngine?"single-engine at low load — gentle on machinery, watch single-shaft hours.":"twin-engine; "} ${r.maxHs>2&&r.v>13?"Some slamming exposure at this speed in head seas — Plan with lower speed or the lee-side corridor reduces it.":"No significant slamming exposure on this plan."}`;
   if(/slow|faster|speed|quick/.test(q)){
     const alts=res.plans.filter((p,i)=>i!==(window._sel||0));
-    return `Current: ${r.v} kn, ${fmtH(r.t)}. Alternatives: ${alts.map((p,i)=>`${"ABC"[res.plans.indexOf(p)]} — ${p.v} kn, ${fmtH(p.t)}, ${Math.round(p.fuel).toLocaleString()} L`).join("; ")}. Tap a plan card to switch.`;
+    return `Current: ${r.v} kn, ${fmtH(r.t)}. Alternatives: ${alts.map((p)=>`${"ABC"[res.plans.indexOf(p)]} — ${p.v} kn, ${fmtH(p.t)}, ${Math.round(p.fuel).toLocaleString()} kg`).join("; ")}. Tap a plan card to switch.`;
   }
   if(/co2|emission|carbon|cii|seemp/.test(q))
-    return `${(r.fuel*TWIN.co2PerL/1000).toFixed(1)} t CO₂ this passage vs ${(B.fuel*TWIN.co2PerL/1000).toFixed(1)} t baseline. The voyage debrief logs this against your SEEMP continuous-improvement record.`;
+    return `${(r.fuel*(VESSEL_CO2_PER_KG||0)/1000).toFixed(1)} t CO₂ this passage vs ${(B.fuel*(VESSEL_CO2_PER_KG||0)/1000).toFixed(1)} t baseline. The voyage debrief logs this against your SEEMP continuous-improvement record.`;
   if(/weather|forecast|wind|grib/.test(q)){
-    const w=SCENARIOS[scId](42.5,8.5,0);
-    return `Scenario: ${document.getElementById("scenario").selectedOptions[0].textContent}. Off west Corsica now: ${w.hs.toFixed(1)} m, wind ${Math.round(w.wSpd)} kn. Forecast field updates re-optimise the plan automatically underway.`;
+    return `${document.getElementById("wxprov").textContent}. Forecast field updates re-optimise the plan automatically underway.`;
   }
   return `I can explain the recommended plans or adjust the passage. Try: "Why this route?", "Fuel vs baseline?", "Where is it roughest?", "What about wear?", or give me a constraint like "arrive by 21:00".`;
 }
-function chatAsk(q){ if(!q.trim()) return; chatPush("me",q); setTimeout(()=>chatPush("ai",answerChat(q)),150); }
-const WEAR_POLICY=50; // machinery-care: per-vessel policy (engineer-set in production), not a passage input
+async function chatAsk(q){ if(!q.trim()) return; chatPush("me",q); const ans=await answerChat(q); chatPush("ai",ans); }
 const PRESETS={ owner:{econ:25,comf:90}, repo:{econ:20,comf:10}, charter:{econ:85,comf:40}, delivery:{econ:45,comf:15} };
 document.getElementById("presets").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b) return;
   document.querySelectorAll("#presets button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
   const p=PRESETS[b.dataset.p];
   document.getElementById("w_econ").value=p.econ; document.getElementById("w_comf").value=p.comf;
-  window._sel=0; render();
+  requestPlan();
 });
-for(const id of ["scenario","arriveby","w_econ","w_comf"]) document.getElementById(id).addEventListener("input",()=>{window._sel=0; render();});
-document.getElementById("tscrub").addEventListener("input",render);
+let _sliderDebounce=null;
+for(const id of ["w_econ","w_comf"]) document.getElementById(id).addEventListener("input",()=>{
+  clearTimeout(_sliderDebounce);
+  _sliderDebounce=setTimeout(requestPlan, 350);
+});
+document.getElementById("arriveby").addEventListener("change",()=>requestPlan());
+document.getElementById("tscrub").addEventListener("input",()=>renderUI());
 document.getElementById("chatsend").addEventListener("click",()=>{const i=document.getElementById("chatin"); chatAsk(i.value); i.value="";});
 document.getElementById("chatin").addEventListener("keydown",e=>{if(e.key==="Enter"){chatAsk(e.target.value); e.target.value="";}});
 document.getElementById("chips").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) chatAsk(b.dataset.q);});
@@ -844,7 +870,7 @@ function setMode(m){
   if(m==="transit" && +document.getElementById("tscrub").value===0){
     document.getElementById("tscrub").value=2; // join the passage 2h out so setpoints are live
   }
-  render();
+  renderUI();
 }
 document.getElementById("tab-plan").addEventListener("click",()=>setMode("plan"));
 document.getElementById("tab-transit").addEventListener("click",()=>setMode("transit"));
@@ -853,15 +879,7 @@ document.getElementById("startbtn").addEventListener("click",()=>{
   chatPush("ai",`<b>Passage started</b> on Plan ${"ABC"[window._sel||0]} — ${r.corr} at ${r.v} kn. Departed Antibes 08:00, ETA Porto Cervo ${eta(r.t)}. I'll flag any forecast or performance drift; setpoints are on the vessel display.`);
   setMode("transit");
 });
-/* register live weather field if the ingestion layer has produced one (prototype/livewx.js) */
-if(typeof window!=="undefined" && window.LIVE_WX){
-  SCENARIOS.live=makeLiveScenario(window.LIVE_WX);
-  const o=document.createElement("option"); o.value="live";
-  o.textContent=`Live — ${window.LIVE_WX.source} (${window.LIVE_WX.fetched.slice(0,16)}Z)`;
-  document.getElementById("scenario").prepend(o);
-  document.getElementById("scenario").value="live";
-}
-render();
+bootstrap();
 </script>
 </body>
 </html>
