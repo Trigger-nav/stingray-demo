@@ -826,6 +826,10 @@ async function answerChat(qRaw){
     if(!opt){ opt=document.createElement("option"); opt.value=Math.round(win*10)/10;
       opt.textContent=`${m[1].padStart(2,"0")}:${m[2]||"00"} (custom)`; sel.appendChild(opt); }
     sel.value=opt.value;
+    // Immediate acknowledgment: the replan below is a real optimiser job
+    // (20-60s) -- without this line the chat looks dead until it finishes
+    // (found in B2 manual verification: user reasonably gave up waiting).
+    chatPush("ai",`Setting a ${m[1].padStart(2,"0")}:${m[2]||"00"} arrival window and replanning — this takes up to a minute…`);
     await requestPlan();
     const nr=window._res;
     return nr.missedWindow
