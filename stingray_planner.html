@@ -232,8 +232,13 @@
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
         <h2 style="margin:0;">Route overview — <span style="color:var(--gold)">not for navigation</span></h2>
         <select id="packsel" class="plan-only" style="width:auto; margin-left:auto; font-size:11.5px; padding:4px 8px;">
-          <option value="med" selected>Western Mediterranean</option>
+          <!-- The small "med" corridor pack is deliberately NOT offered here:
+               med_full supersets its coverage with the same real data. It
+               stays in the repo as the regression fixture every optimiser
+               test (and the Bonifacio suite) is pinned to. -->
+          <option value="med_full" selected>Mediterranean</option>
           <option value="uk_sw">UK South-West</option>
+          <option value="caribbean">Caribbean</option>
         </select>
       </div>
       <canvas id="map" width="860" height="640"></canvas>
@@ -271,10 +276,22 @@ const REGION_PACKS={
     destination:{lat_deg:50.13, lon_deg:-5.046666666666666},
     portMarks:[{lat:50.36667, lon:-4.15, name:"Plymouth"},{lat:50.15, lon:-5.06667, name:"Falmouth"}],
     landURL:"assets/uk_sw_coastline.json", medDecor:false },
+  med_full:{ pack_id:"med_full", label:"Mediterranean",
+    map:{latMin:30.0, latMax:46.0, lonMin:-6.0, lonMax:28.0}, midlat:38.0,
+    routeHTML:'<b>Antibes</b> → <b>Porto Cervo</b> · dep 08:00 · M/Y 50m displacement (twin engine)',
+    origin:{lat_deg:43.55, lon_deg:7.17}, destination:{lat_deg:41.13, lon_deg:9.55},
+    portMarks:[{lat:43.55, lon:7.17, name:"Antibes"},{lat:41.13, lon:9.55, name:"Porto Cervo"}],
+    landURL:"assets/med_full_coastline.json", medDecor:false },
+  caribbean:{ pack_id:"caribbean", label:"Caribbean",
+    map:{latMin:11.5, latMax:27.5, lonMin:-80.0, lonMax:-59.5}, midlat:18.09,
+    routeHTML:'<b>St Thomas</b> → <b>St Barths</b> · dep 08:00 · M/Y 50m displacement (twin engine)',
+    origin:{lat_deg:18.3, lon_deg:-64.93333333333334}, destination:{lat_deg:17.87, lon_deg:-62.85},
+    portMarks:[{lat:18.3, lon:-64.93333, name:"St Thomas"},{lat:17.87, lon:-62.85, name:"St Barths"}],
+    landURL:"assets/caribbean_coastline.json", medDecor:false },
 };
-let ACTIVE_PACK_ID="med";
+let ACTIVE_PACK_ID="med_full";
 function activePack(){ return REGION_PACKS[ACTIVE_PACK_ID]; }
-let MIDLAT = 42.3, KLON = Math.cos(MIDLAT*D2R);
+let MIDLAT = 38.0, KLON = Math.cos(MIDLAT*D2R); // med_full's own ref lat (the demo's default pack)
 function nmDist(a,b){ const dy=(b.lat-a.lat)*NM_LAT, dx=(b.lon-a.lon)*NM_LAT*KLON; return Math.hypot(dx,dy); }
 function bearing(a,b){ const dy=(b.lat-a.lat), dx=(b.lon-a.lon)*KLON; return (Math.atan2(dx,dy)/D2R+360)%360; }
 
@@ -450,14 +467,26 @@ async function fetchWeatherField(h){
 
 <script>
 /* ================= UI ================= */
-const MAP={latMin:40.75, latMax:44.0, lonMin:6.7, lonMax:10.15};
+const MAP={latMin:30.0, latMax:46.0, lonMin:-6.0, lonMax:28.0}; // med_full (default pack); mutated by the region selector
 const cv=document.getElementById("map"), ctx=cv.getContext("2d");
 const X=lon=>(lon-MAP.lonMin)/(MAP.lonMax-MAP.lonMin)*cv.width;
 const Y=lat=>cv.height-(lat-MAP.latMin)/(MAP.latMax-MAP.latMin)*cv.height;
 
 /* Coastlines: LAND (Med) is defined in the shared script; other packs
    fetch theirs from assets/ (real GSHHG data exported from stingray-core). */
+// LAND (the hardcoded small-Med polygons in the shared script) is now only
+// a fallback: every pack the demo offers ships its own real GSHHG-derived
+// coastline under assets/, loaded on demand by loadPackLand().
 let ACTIVE_LAND = LAND;
+async function loadPackLand(){
+  const p = activePack();
+  if(!p.landURL){ ACTIVE_LAND = LAND; return; }
+  if(!p._land){
+    try{ p._land = (await (await fetch(p.landURL)).json()).polygons; }
+    catch(err){ p._land = []; console.error("coastline load failed", p.landURL, err); }
+  }
+  ACTIVE_LAND = p._land;
+}
 /* ---------- Chart layer: bathymetry, soundings, TSS, reserves ---------- */
 let _bathy=null;
 function distToLandNm(lat,lon){
@@ -894,6 +923,7 @@ async function bootstrap(){
     tagEl.textContent = "LIVE FORECAST · PROVISIONAL TWIN";
     tagEl.classList.remove("err");
     setInterval(refreshHealth, 5*60_000);
+    await loadPackLand(); // the default pack ships its own real coastline
     // No auto-plan on launch: draw the base chart immediately (fast — one
     // weather-field fetch, no 20-40s optimise call) and wait for the user
     // to set up the passage and press CALCULATE ROUTE.
@@ -1309,11 +1339,7 @@ document.getElementById("packsel").addEventListener("change", async e=>{
   _bathy = null;                        // rebuild background for the new region
   window._sel = 0; window._lastSig = null; window._res = null;
   document.getElementById("routeline").innerHTML = p.routeHTML;
-  if(p.landURL && !p._land){
-    try{ p._land = (await (await fetch(p.landURL)).json()).polygons; }
-    catch(err){ p._land = []; console.error("coastline load failed", err); }
-  }
-  ACTIVE_LAND = p.landURL ? p._land : LAND;
+  await loadPackLand();
   if(typeof renderFavSel==="function") renderFavSel(); // favourites are pack-scoped
   setMode("plan");                      // a region change restarts at the planning stage
   renderUI();                           // instant base chart for the new region
