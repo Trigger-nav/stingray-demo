@@ -49,8 +49,21 @@
     background:linear-gradient(135deg, var(--acc2), #0C807E); color:#0E1138;
     border:0; border-radius:9px; font-size:14px; font-weight:750; letter-spacing:1.5px; cursor:pointer;}
   .startbtn:hover{filter:brightness(1.12);}
+  #calcbtn{opacity:.45;}
+  #calcbtn.ready{opacity:1; box-shadow:0 0 14px rgba(83,178,185,.35);}
+  /* stingray swim loader */
+  .swimwrap{display:flex; flex-direction:column; align-items:center; gap:6px; padding:14px 0 8px;}
+  .swim{width:110px; height:50px; overflow:visible;}
+  .swim g{animation:swim 2.4s ease-in-out infinite; transform-origin:50% 50%;}
+  @keyframes swim{0%,100%{transform:translateX(-16px) translateY(2px) rotate(-5deg); opacity:.75}
+    50%{transform:translateX(16px) translateY(-2px) rotate(5deg); opacity:1}}
   .card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px;}
   .card h2{font-size:11px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; margin-bottom:10px;}
+  .endbtns{display:grid; grid-template-columns:1fr 1fr auto; gap:8px; margin-bottom:10px;}
+  .endbtns button{background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:7px 10px; font-size:12px; cursor:pointer;}
+  .endbtns button.arm{border-color:var(--gold); color:var(--gold);}
+  .endbtns button:disabled{opacity:.4; cursor:default;}
+  #map.picking{cursor:crosshair;}
   .presets{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px;}
   .presets button{background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:8px 6px; font-size:12px; cursor:pointer;}
   .presets button.on{border-color:var(--acc); color:var(--acc); background:#0f2536;}
@@ -132,6 +145,21 @@
   <div class="card" id="card-mission">
     <h2>Passage</h2>
     <div class="route-line plan-only" id="routeline"><b>Antibes</b> → <b>Porto Cervo</b> · dep 08:00 · M/Y 50m displacement (twin engine)</div>
+    <div class="endbtns plan-only">
+      <button id="setorig">Set origin</button>
+      <button id="setdest">Set destination</button>
+      <button id="resetends" disabled>Reset</button>
+    </div>
+    <div class="conf plan-only" id="endslab" style="display:none; margin-bottom:8px;"></div>
+    <div class="endbtns plan-only" style="grid-template-columns:1.4fr auto auto;">
+      <select id="favsel" style="font-size:12px;"><option value="">Favourites…</option></select>
+      <button id="favorig" disabled title="Use selected favourite as origin">→ Origin</button>
+      <button id="favdest" disabled title="Use selected favourite as destination">→ Dest</button>
+    </div>
+    <div class="endbtns plan-only" id="savefavrow" style="grid-template-columns:1fr 1fr; display:none;">
+      <button id="saveorig">★ Save origin</button>
+      <button id="savedest">★ Save destination</button>
+    </div>
     <div class="slider">
       <label><span>Arrive by (ETA window)</span></label>
       <select id="arriveby">
@@ -162,6 +190,7 @@
       <b style="color:var(--txt); font-weight:600;">Machinery care</b> — vessel policy, applied to every plan · wear shown per plan
     </div>
     <div class="conf" title="On a real vessel these predictions carry live confidence intervals learned from telemetry.">Provisional twin (v0) — confidence intervals arrive with real telemetry</div>
+    <button id="calcbtn" class="startbtn ready" style="margin-top:12px">CALCULATE ROUTE</button>
   </div>
 
   <div class="card transit-only" id="card-active">
@@ -204,7 +233,7 @@
         <h2 style="margin:0;">Route overview — <span style="color:var(--gold)">not for navigation</span></h2>
         <select id="packsel" class="plan-only" style="width:auto; margin-left:auto; font-size:11.5px; padding:4px 8px;">
           <option value="med" selected>Western Mediterranean</option>
-          <option value="uk_sw">UK South-West · Channel</option>
+          <option value="uk_sw">UK South-West</option>
         </select>
       </div>
       <canvas id="map" width="860" height="640"></canvas>
@@ -235,7 +264,7 @@ const REGION_PACKS={
     origin:null, destination:null,
     portMarks:[PORTS.antibes, PORTS.portocervo],
     landURL:null, medDecor:true },
-  uk_sw:{ pack_id:"uk_sw", label:"UK South-West · Channel",
+  uk_sw:{ pack_id:"uk_sw", label:"UK South-West",
     map:{latMin:49.8, latMax:50.8, lonMin:-5.5, lonMax:-3.5}, midlat:50.3,
     routeHTML:'<b>Plymouth</b> → <b>Falmouth</b> · dep 08:00 · M/Y 50m displacement (twin engine)',
     origin:{lat_deg:50.34666666666667, lon_deg:-4.15},
@@ -333,7 +362,10 @@ async function apiFetch(method, path, body){
 function mapLatLon(p){ return {lat:p.lat_deg, lon:p.lon_deg}; }
 function mapCandidate(c){
   return {
-    t:c.duration_h, fuel:c.fuel_kg, corr:c.corridor_name,
+    t:c.duration_h, fuel:c.fuel_kg,
+    // "Lattice route" is the API's honest internal name for an open-water
+    // optimised route — display it in product language instead.
+    corr:c.corridor_name==="Lattice route" ? "Optimised route" : c.corridor_name,
     v:Math.round(c.speed_kn*10)/10, // UK pack's speed grid yields long floats; 0.1kn is real display precision
     comfort:c.comfort_index, wear:c.wear_index, maxHs:c.max_hs_m,
     oneEngine:c.active_engines===1, side:c.side, dist:c.distance_nm,
@@ -353,7 +385,13 @@ function mapPlanResult(result, latestH){
 async function optimise(econ, comf, latestH, onSlow){
   const p=activePack();
   const planBody = { pace: econ, comfort: comf, latest_arrival_h: latestH, pack_id: p.pack_id };
-  if(p.origin){ planBody.origin=p.origin; planBody.destination=p.destination; }
+  // Custom endpoints (chart picks) override the pack's own defaults; either
+  // side can be custom independently — an omitted field falls back to the
+  // pack default server-side (PlanRequestIn's own None semantics).
+  const effOrigin = (window.CUSTOM && CUSTOM.origin) || p.origin;
+  const effDest = (window.CUSTOM && CUSTOM.destination) || p.destination;
+  if(effOrigin) planBody.origin = effOrigin;
+  if(effDest) planBody.destination = effDest;
   const submitted = await apiFetch("POST", "/v1/plans", planBody);
   // ticket B2 verification: a real timing bug (core.optimiser.optimise
   // was doing its expensive isochrone pre-pass *twice* for any
@@ -576,11 +614,28 @@ function drawRoutes(res,selIdx,t){
     else { rem-=d; pos=r.track[i]; } }
   if(t>0 && t<r.t+.5){ ctx.fillStyle="#111"; ctx.beginPath(); ctx.arc(X(pos.lon),Y(pos.lat),5,0,7); ctx.fill();
     ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke(); }
-  // ports
+  drawEndpointMarks();
+}
+function drawEndpointMarks(){
+  // ports (dimmed when a custom endpoint replaces them)
+  const hasCustom = window.CUSTOM && (CUSTOM.origin || CUSTOM.destination);
   for(const p of activePack().portMarks){
+    ctx.globalAlpha = hasCustom ? 0.45 : 1;
     ctx.fillStyle="#a3242a"; ctx.beginPath();
     ctx.moveTo(X(p.lon),Y(p.lat)-5); ctx.lineTo(X(p.lon)+5,Y(p.lat)); ctx.lineTo(X(p.lon),Y(p.lat)+5); ctx.lineTo(X(p.lon)-5,Y(p.lat)); ctx.closePath(); ctx.fill();
     ctx.fillStyle="#1c3550"; ctx.font="bold 11px sans-serif"; ctx.fillText(p.name, X(p.lon)+8, Y(p.lat)+4);
+    ctx.globalAlpha = 1;
+  }
+  // custom endpoint pins (chart picks) — brand teal ring + label
+  if(window.CUSTOM){
+    for(const [key,label] of [["origin","ORIGIN"],["destination","DEST"]]){
+      const c=CUSTOM[key]; if(!c) continue;
+      const x=X(c.lon_deg), y=Y(c.lat_deg);
+      ctx.strokeStyle="#0C807E"; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.arc(x,y,7,0,7); ctx.stroke();
+      ctx.fillStyle="#0C807E"; ctx.beginPath(); ctx.arc(x,y,2.5,0,7); ctx.fill();
+      ctx.font="bold 10px sans-serif"; ctx.fillText(label, x+10, y-6);
+    }
   }
 }
 function fmtH(h){ const H=Math.floor(h), M=Math.round((h-H)*60); return `${H}h${String(M).padStart(2,"0")}`; }
@@ -612,10 +667,43 @@ function econVal(){ return +document.getElementById("w_econ").value; }
 function comfVal(){ return +document.getElementById("w_comf").value; }
 function latestHVal(){ const ab=document.getElementById("arriveby").value; return ab? +ab : null; }
 
+let _loadTimer=null, _loadT0=null;
 function showLoading(on, message){
   const el=document.getElementById("planstatus");
   el.style.display = on ? "block" : "none";
-  el.textContent = message || "Computing plan…";
+  if(!on){
+    if(_loadTimer){ clearInterval(_loadTimer); _loadTimer=null; }
+    return;
+  }
+  if(_loadTimer){
+    // already animating — just update the message base (onSlow path)
+    const lm=document.getElementById("loadmsg");
+    if(lm) lm.dataset.base = message || "Calculating passage…";
+    return;
+  }
+  _loadT0 = Date.now();
+  showLoadingRender(el, message);
+  // Progress is honest-indeterminate: the bar fills asymptotically with
+  // elapsed time (the job API reports no true percentage) and never
+  // claims completion; elapsed seconds shown alongside.
+  _loadTimer = setInterval(()=>{
+    const s=(Date.now()-_loadT0)/1000;
+    const lb=document.getElementById("loadbar");
+    if(lb) lb.style.width=(2+90*(1-Math.exp(-s/16))).toFixed(1)+"%";
+    const lm=document.getElementById("loadmsg");
+    if(lm) lm.textContent=`${lm.dataset.base} ${Math.round(s)}s`;
+  }, 250);
+}
+function showLoadingRender(el, message){
+  el.innerHTML = `<div class="swimwrap">
+      <svg class="swim" viewBox="54 6 30 32"><g fill="#53B2B9">
+        <path d="M60.674,20.002c0.927-3.079,2.959-7.174,7.362-8.81c4.389,1.631,6.422,5.704,7.353,8.778c1.435,0.566,2.791,1.285,4.041,2.151c-0.53-3.422-2.653-11.816-10.876-14.402l-0.518-0.163l-0.518,0.163c-8.273,2.602-10.372,11.086-10.886,14.467C57.883,21.31,59.237,20.576,60.674,20.002z"/>
+        <path d="M68.544,29.874l0.545-3.431c2.607,0.244,4.957,1.379,6.747,3.095l-1.798,3.115C72.703,31.062,70.745,30.017,68.544,29.874z"/>
+        <path d="M57.172,24.231l1.757,3.042c2.094-1.835,4.739-3.051,7.653-3.36l0.402,2.53c-2.607,0.244-4.957,1.379-6.748,3.095l1.798,3.115c1.438-1.715,3.594-2.808,6.001-2.808v-3.454v-2.561v-3.454C63.923,20.377,60.145,21.825,57.172,24.231z"/>
+        <path d="M78.901,24.231c-2.484-2.01-5.534-3.338-8.868-3.725l-0.542,3.408c2.915,0.308,5.56,1.524,7.654,3.359L78.901,24.231z"/>
+      </g></svg>
+      <span class="bar" style="width:150px;"><i id="loadbar" style="width:2%; background:linear-gradient(90deg,var(--acc2),var(--acc));"></i></span>
+      <span id="loadmsg" data-base="${message || "Calculating passage…"}">${message || "Calculating passage…"}</span></div>`;
 }
 function errorCopy(err){
   const copy = {
@@ -648,6 +736,11 @@ async function requestPlan(){
     res.comfRef=Math.max(res.baseline.comfort,...res.plans.map(p=>p.comfort),1);
     res.wearRef=Math.max(res.baseline.wear,...res.plans.map(p=>p.wear),1);
     window._res=res; window._sel=0;
+    // Custom endpoints: this pair just planned successfully — remember it
+    // so an invalid later pick can snap back instead of stranding a pin.
+    if(window.CUSTOM) CUSTOM._lastValid = { origin: CUSTOM.origin, destination: CUSTOM.destination };
+    const cb=document.getElementById("calcbtn");
+    if(cb){ cb.textContent="RECALCULATE ROUTE"; cb.classList.remove("ready"); }
     showLoading(false);
     await renderUI();
   }catch(err){
@@ -663,6 +756,14 @@ async function requestPlan(){
       showError({kind:"ui_bug", message:"UI rendering error — see browser console (this is a bug, not a connection problem)."});
       return;
     }
+    // Custom endpoints: an endpoint-validation rejection (land/shoal pick)
+    // snaps the offending pin back to the last pair that actually planned —
+    // the error message below still says why the pick was refused.
+    if(window.CUSTOM && err.kind==="invalid_request" && CUSTOM._lastValid){
+      CUSTOM.origin = CUSTOM._lastValid.origin;
+      CUSTOM.destination = CUSTOM._lastValid.destination;
+      if(typeof updateEndsUI==="function") updateEndsUI();
+    }
     if(window._res){
       await renderUI(); // keep the last successful result visible underneath the error
     }else{
@@ -674,7 +775,21 @@ async function requestPlan(){
 
 async function renderUI(){
   const myGen = ++_drawGen;
-  const res = window._res; if(!res) return;
+  const res = window._res;
+  if(!res){
+    // Base-chart mode (pre-first-plan): real weather + geography + endpoint
+    // pins, no routes — what makes initial launch fast and region switches
+    // instant.
+    const t=+document.getElementById("tscrub").value;
+    document.getElementById("tlab").textContent=`${String(Math.floor((8+t)%24)).padStart(2,"0")}:00 · +${t}h`;
+    const field = await fetchWeatherField(t);
+    if(myGen!==_drawGen) return;
+    ctx.clearRect(0,0,cv.width,cv.height);
+    paintWx(field); drawLand(); drawChartOverlays(); drawEndpointMarks();
+    const sb=document.getElementById("startbtn");
+    sb.textContent="BEGIN PASSAGE"; sb.disabled=true; sb.style.opacity=0.4;
+    return;
+  }
   const t=+document.getElementById("tscrub").value;
   // ship-clock time (dep 08:00) + offset from departure, not raw forecast hours
   document.getElementById("tlab").textContent=`${String(Math.floor((8+t)%24)).padStart(2,"0")}:00 · +${t}h`;
@@ -779,7 +894,12 @@ async function bootstrap(){
     tagEl.textContent = "LIVE FORECAST · PROVISIONAL TWIN";
     tagEl.classList.remove("err");
     setInterval(refreshHealth, 5*60_000);
-    await requestPlan();
+    // No auto-plan on launch: draw the base chart immediately (fast — one
+    // weather-field fetch, no 20-40s optimise call) and wait for the user
+    // to set up the passage and press CALCULATE ROUTE.
+    await renderUI();
+    document.getElementById("plans").innerHTML =
+      '<div class="baseline" style="padding:6px 2px">Set origin, destination and mission priorities — then press <b>Calculate route</b>.</div>';
   }catch(err){
     const failTag = document.querySelector("header .tag");
     failTag.textContent = "CONNECTION FAILED";
@@ -1040,19 +1160,32 @@ document.getElementById("presets").addEventListener("click",e=>{
   document.querySelectorAll("#presets button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
   const p=PRESETS[b.dataset.p];
   document.getElementById("w_econ").value=p.econ; document.getElementById("w_comf").value=p.comf;
+  markDirty();
+});
+/* Explicit-calculate flow: setting changes mark the plan stale; nothing
+   computes until the CALCULATE ROUTE button is pressed. */
+function markDirty(){
+  const b=document.getElementById("calcbtn");
+  b.classList.add("ready");
+  b.textContent = window._res ? "RECALCULATE ROUTE" : "CALCULATE ROUTE";
+}
+window.markDirty = markDirty;
+for(const id of ["w_econ","w_comf"]) document.getElementById(id).addEventListener("input", markDirty);
+document.getElementById("arriveby").addEventListener("change", markDirty);
+document.getElementById("calcbtn").addEventListener("click", ()=>{
+  document.getElementById("calcbtn").classList.remove("ready");
+  if(!window._res) document.getElementById("plans").innerHTML=""; // clear the setup hint under the loader
   requestPlan();
 });
-let _sliderDebounce=null;
-for(const id of ["w_econ","w_comf"]) document.getElementById(id).addEventListener("input",()=>{
-  clearTimeout(_sliderDebounce);
-  _sliderDebounce=setTimeout(requestPlan, 350);
-});
-document.getElementById("arriveby").addEventListener("change",()=>requestPlan());
 document.getElementById("tscrub").addEventListener("input",()=>renderUI());
 document.getElementById("chatsend").addEventListener("click",()=>{const i=document.getElementById("chatin"); chatAsk(i.value); i.value="";});
 document.getElementById("chatin").addEventListener("keydown",e=>{if(e.key==="Enter"){chatAsk(e.target.value); e.target.value="";}});
 document.getElementById("chips").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) chatAsk(b.dataset.q);});
 function setMode(m){
+  if(m==="transit" && !window._res){
+    chatPush("ai","Calculate a route first — then Begin Passage takes you to the underway view.");
+    return;
+  }
   document.body.classList.toggle("mode-plan", m==="plan");
   document.body.classList.toggle("mode-transit", m==="transit");
   document.getElementById("tab-plan").classList.toggle("on", m==="plan");
@@ -1062,7 +1195,113 @@ function setMode(m){
   }
   renderUI();
 }
+/* ---------- Custom endpoints: click the chart to set origin/destination ---------- */
+window.CUSTOM = { origin:null, destination:null, arm:null };
+function fmtCoord(c){
+  const ns = c.lat_deg>=0?"N":"S", ew = c.lon_deg>=0?"E":"W";
+  return `${Math.abs(c.lat_deg).toFixed(3)}°${ns} ${Math.abs(c.lon_deg).toFixed(3)}°${ew}`;
+}
+function updateEndsUI(){
+  const p=activePack();
+  const oBtn=document.getElementById("setorig"), dBtn=document.getElementById("setdest");
+  oBtn.classList.toggle("arm", CUSTOM.arm==="origin");
+  dBtn.classList.toggle("arm", CUSTOM.arm==="destination");
+  oBtn.textContent = CUSTOM.origin ? "Origin: custom" : "Set origin";
+  dBtn.textContent = CUSTOM.destination ? "Dest: custom" : "Set destination";
+  document.getElementById("resetends").disabled = !(CUSTOM.origin||CUSTOM.destination);
+  cv.classList.toggle("picking", !!CUSTOM.arm);
+  const lab=document.getElementById("endslab");
+  if(CUSTOM.arm){
+    lab.style.display="";
+    lab.textContent=`Click the chart to place the ${CUSTOM.arm==="origin"?"origin":"destination"} — click again to adjust, press the button to finish.`;
+  } else if(CUSTOM.origin||CUSTOM.destination){
+    lab.style.display=""; lab.textContent="Custom passage — server-validated against real geography.";
+  } else lab.style.display="none";
+  // Save-favourite buttons: visible only when there's something to save.
+  const sr=document.getElementById("savefavrow");
+  sr.style.display=(CUSTOM.origin||CUSTOM.destination)?"":"none";
+  document.getElementById("saveorig").disabled=!CUSTOM.origin;
+  document.getElementById("savedest").disabled=!CUSTOM.destination;
+  // Header passage line reflects the custom endpoints (falls back to the
+  // pack's own named ports on whichever side isn't custom).
+  const oName = CUSTOM.origin ? fmtCoord(CUSTOM.origin) : p.portMarks[0].name;
+  const dName = CUSTOM.destination ? fmtCoord(CUSTOM.destination) : p.portMarks[1].name;
+  document.getElementById("routeline").innerHTML =
+    (CUSTOM.origin||CUSTOM.destination)
+      ? `<b>${oName}</b> → <b>${dName}</b> · dep 08:00 · M/Y 50m displacement (twin engine)`
+      : p.routeHTML;
+}
+for(const [id,which] of [["setorig","origin"],["setdest","destination"]])
+  document.getElementById(id).addEventListener("click", ()=>{
+    CUSTOM.arm = CUSTOM.arm===which ? null : which; // toggle
+    updateEndsUI();
+  });
+
+/* ---------- Favourites: named places via the real /v1/favourites API ---------- */
+const FAV_VESSEL = "demo";
+let FAVOURITES = [];
+async function loadFavourites(){
+  try{ FAVOURITES = await apiFetch("GET", `/v1/favourites?vessel_id=${FAV_VESSEL}`); }
+  catch(e){ FAVOURITES = []; console.error("favourites load failed", e); }
+  renderFavSel();
+}
+function renderFavSel(){
+  const sel=document.getElementById("favsel");
+  const packFavs=FAVOURITES.filter(f=>f.pack_id===ACTIVE_PACK_ID);
+  sel.innerHTML=""; const opt0=document.createElement("option");
+  opt0.value=""; opt0.textContent = packFavs.length ? "Favourites…" : "No favourites in this region yet";
+  sel.appendChild(opt0);
+  for(const f of packFavs){
+    const o=document.createElement("option"); o.value=f.id; o.textContent=f.name; sel.appendChild(o);
+  }
+  const dis=packFavs.length===0;
+  document.getElementById("favorig").disabled=dis;
+  document.getElementById("favdest").disabled=dis;
+}
+function applyFav(which){
+  const sel=document.getElementById("favsel");
+  const f=FAVOURITES.find(x=>x.id===sel.value); if(!f) return;
+  CUSTOM[which]={ lat_deg:f.lat_deg, lon_deg:f.lon_deg };
+  updateEndsUI(); renderUI(); markDirty();
+}
+async function saveFav(which){
+  const c=CUSTOM[which]; if(!c) return;
+  const name=prompt(`Name this ${which}:`, fmtCoord(c)); if(!name) return;
+  try{
+    const created=await apiFetch("POST", `/v1/favourites?vessel_id=${FAV_VESSEL}`,
+      { name, lat_deg:c.lat_deg, lon_deg:c.lon_deg, is_anchorage:false, pack_id:ACTIVE_PACK_ID });
+    FAVOURITES.push(created); renderFavSel();
+    document.getElementById("favsel").value=created.id;
+    chatPush("ai",`Saved <b>${name}</b> to this vessel's favourites.`);
+  }catch(e){ chatPush("ai",`Couldn't save favourite — ${e.message}`); }
+}
+document.getElementById("favorig").addEventListener("click", ()=>applyFav("origin"));
+document.getElementById("favdest").addEventListener("click", ()=>applyFav("destination"));
+document.getElementById("saveorig").addEventListener("click", ()=>saveFav("origin"));
+document.getElementById("savedest").addEventListener("click", ()=>saveFav("destination"));
+loadFavourites();
+document.getElementById("resetends").addEventListener("click", ()=>{
+  window.CUSTOM = { origin:null, destination:null, arm:null };
+  updateEndsUI(); renderUI(); markDirty();
+});
+cv.addEventListener("click", e=>{
+  if(!CUSTOM.arm) return;
+  const r=cv.getBoundingClientRect();
+  const px=(e.clientX-r.left)*(cv.width/r.width), py=(e.clientY-r.top)*(cv.height/r.height);
+  const lon = MAP.lonMin + px/cv.width*(MAP.lonMax-MAP.lonMin);
+  const lat = MAP.latMin + (1 - py/cv.height)*(MAP.latMax-MAP.latMin);
+  CUSTOM[CUSTOM.arm] = { lat_deg: Math.round(lat*1e4)/1e4, lon_deg: Math.round(lon*1e4)/1e4 };
+  // Mode stays armed — click again to adjust; press the button (or place
+  // the other end) to finish. Disarming after one click made repeat
+  // adjustments silently do nothing, which read as "the pin won't stick".
+  updateEndsUI();
+  renderUI();     // draw the pin NOW — instant feedback
+  markDirty();    // server-side validation happens on Calculate — a land/shoal
+                  // pick comes back as a clear invalid_request message then
+});
 document.getElementById("packsel").addEventListener("change", async e=>{
+  window.CUSTOM = { origin:null, destination:null, arm:null };
+  updateEndsUI();
   ACTIVE_PACK_ID = e.target.value;
   const p = activePack();
   MIDLAT = p.midlat; KLON = Math.cos(MIDLAT*D2R);
@@ -1075,9 +1314,13 @@ document.getElementById("packsel").addEventListener("change", async e=>{
     catch(err){ p._land = []; console.error("coastline load failed", err); }
   }
   ACTIVE_LAND = p.landURL ? p._land : LAND;
+  if(typeof renderFavSel==="function") renderFavSel(); // favourites are pack-scoped
   setMode("plan");                      // a region change restarts at the planning stage
-  chatPush("ai", `Region switched to <b>${p.label}</b> — replanning on this pack's real geography and forecast…`);
-  requestPlan();
+  renderUI();                           // instant base chart for the new region
+  if(typeof markDirty==="function") markDirty();
+  document.getElementById("plans").innerHTML =
+    '<div class="baseline" style="padding:6px 2px">Set origin, destination and mission priorities — then press <b>Calculate route</b>.</div>';
+  chatPush("ai", `Region switched to <b>${p.label}</b> — set your passage and press Calculate route.`);
 });
 document.getElementById("tab-plan").addEventListener("click",()=>setMode("plan"));
 document.getElementById("tab-transit").addEventListener("click",()=>setMode("transit"));
