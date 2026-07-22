@@ -231,7 +231,8 @@
   <div class="card" id="card-map">
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
         <h2 style="margin:0;">Route overview — <span style="color:var(--gold)">not for navigation</span></h2>
-        <select id="packsel" class="plan-only" style="width:auto; margin-left:auto; font-size:11.5px; padding:4px 8px;">
+        <button id="fitbtn" title="Fit the whole region" style="margin-left:auto; background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:4px 10px; font-size:11.5px; cursor:pointer;">Fit region</button>
+        <select id="packsel" class="plan-only" style="width:auto; font-size:11.5px; padding:4px 8px;">
           <!-- The small "med" corridor pack is deliberately NOT offered here:
                med_full supersets its coverage with the same real data. It
                stays in the repo as the regression fixture every optimiser
@@ -469,8 +470,40 @@ async function fetchWeatherField(h){
 /* ================= UI ================= */
 const MAP={latMin:30.0, latMax:46.0, lonMin:-6.0, lonMax:28.0}; // med_full (default pack); mutated by the region selector
 const cv=document.getElementById("map"), ctx=cv.getContext("2d");
-const X=lon=>(lon-MAP.lonMin)/(MAP.lonMax-MAP.lonMin)*cv.width;
-const Y=lat=>cv.height-(lat-MAP.latMin)/(MAP.latMax-MAP.latMin)*cv.height;
+/* ---------- Viewport: pan/zoom over the active pack's bbox ----------
+   VIEW is the currently-displayed window in lat/lon. Every screen<->world
+   conversion (drawing, endpoint picking, weather-cell placement) goes
+   through X()/Y()/invX()/invY(), so pan/zoom is transparent to all of it.
+   fitView() resets to the whole pack bbox — the widest VIEW ever allowed. */
+const VIEW={latMin:0, latMax:0, lonMin:0, lonMax:0};
+const MIN_SPAN_NM = 2.0;            // tightest zoom: ~2nm across
+function fitView(){ Object.assign(VIEW, MAP); _bathy=null; }
+function viewSpanNm(){ return (VIEW.lonMax-VIEW.lonMin)*60*Math.cos(((VIEW.latMin+VIEW.latMax)/2)*D2R); }
+const X=lon=>(lon-VIEW.lonMin)/(VIEW.lonMax-VIEW.lonMin)*cv.width;
+const Y=lat=>cv.height-(lat-VIEW.latMin)/(VIEW.latMax-VIEW.latMin)*cv.height;
+const invX=px=>VIEW.lonMin + px/cv.width*(VIEW.lonMax-VIEW.lonMin);
+const invY=py=>VIEW.latMin + (1-py/cv.height)*(VIEW.latMax-VIEW.latMin);
+function zoomAt(px, py, factor){
+  const lon0=invX(px), lat0=invY(py);
+  const spanLon=(VIEW.lonMax-VIEW.lonMin)*factor, spanLat=(VIEW.latMax-VIEW.latMin)*factor;
+  // clamp: never wider than the pack bbox, never tighter than MIN_SPAN_NM
+  const maxLon=MAP.lonMax-MAP.lonMin, maxLat=MAP.latMax-MAP.latMin;
+  const midLat=(VIEW.latMin+VIEW.latMax)/2;
+  const minLon=MIN_SPAN_NM/(60*Math.cos(midLat*D2R)), minLat=MIN_SPAN_NM/60;
+  if(spanLon>maxLon || spanLat>maxLat){ fitView(); return; }
+  if(spanLon<minLon || spanLat<minLat) return;
+  const fx=px/cv.width, fy=1-py/cv.height;
+  VIEW.lonMin=lon0-spanLon*fx; VIEW.lonMax=VIEW.lonMin+spanLon;
+  VIEW.latMin=lat0-spanLat*fy; VIEW.latMax=VIEW.latMin+spanLat;
+  clampView(); _bathy=null;
+}
+function clampView(){ // keep the window inside the pack's real data bbox
+  const spanLon=VIEW.lonMax-VIEW.lonMin, spanLat=VIEW.latMax-VIEW.latMin;
+  if(VIEW.lonMin<MAP.lonMin){ VIEW.lonMin=MAP.lonMin; VIEW.lonMax=VIEW.lonMin+spanLon; }
+  if(VIEW.lonMax>MAP.lonMax){ VIEW.lonMax=MAP.lonMax; VIEW.lonMin=VIEW.lonMax-spanLon; }
+  if(VIEW.latMin<MAP.latMin){ VIEW.latMin=MAP.latMin; VIEW.latMax=VIEW.latMin+spanLat; }
+  if(VIEW.latMax>MAP.latMax){ VIEW.latMax=MAP.latMax; VIEW.latMin=VIEW.latMax-spanLat; }
+}
 
 /* Coastlines: LAND (Med) is defined in the shared script; other packs
    fetch theirs from assets/ (real GSHHG data exported from stingray-core). */
@@ -525,8 +558,7 @@ function buildBathy(){
   // ECDIS day-palette depth bands
   const bands=[[20,"#7FB8DC"],[50,"#93C6E4"],[100,"#A9D2EA"],[200,"#C0DFF1"],[500,"#D4EAF6"],[1000,"#E2F1FA"],[9999,"#EDF6FC"]];
   for(let px=0;px<cv.width;px+=step) for(let py=0;py<cv.height;py+=step){
-    const lon=MAP.lonMin+px/cv.width*(MAP.lonMax-MAP.lonMin);
-    const lat=MAP.latMin+(cv.height-py)/cv.height*(MAP.latMax-MAP.latMin);
+    const lon=invX(px), lat=invY(py); // viewport-aware: pan/zoom re-renders this layer
     const d=depthAt(lat,lon);
     b.fillStyle=bands.find(x=>d<x[0])[1]; b.fillRect(px,py,step,step);
   }
@@ -923,6 +955,7 @@ async function bootstrap(){
     tagEl.textContent = "LIVE FORECAST · PROVISIONAL TWIN";
     tagEl.classList.remove("err");
     setInterval(refreshHealth, 5*60_000);
+    fitView();            // viewport starts fitted to the default pack's bbox
     await loadPackLand(); // the default pack ships its own real coastline
     // No auto-plan on launch: draw the base chart immediately (fast — one
     // weather-field fetch, no 20-40s optimise call) and wait for the user
@@ -1314,12 +1347,46 @@ document.getElementById("resetends").addEventListener("click", ()=>{
   window.CUSTOM = { origin:null, destination:null, arm:null };
   updateEndsUI(); renderUI(); markDirty();
 });
-cv.addEventListener("click", e=>{
-  if(!CUSTOM.arm) return;
+/* ---------- Chart navigation: wheel zoom, drag pan ----------
+   Drag is distinguished from click by a movement threshold, so panning
+   never accidentally drops an endpoint pin. */
+const DRAG_THRESHOLD_PX = 4;
+let _drag=null;
+function canvasPx(e){
   const r=cv.getBoundingClientRect();
-  const px=(e.clientX-r.left)*(cv.width/r.width), py=(e.clientY-r.top)*(cv.height/r.height);
-  const lon = MAP.lonMin + px/cv.width*(MAP.lonMax-MAP.lonMin);
-  const lat = MAP.latMin + (1 - py/cv.height)*(MAP.latMax-MAP.latMin);
+  return [ (e.clientX-r.left)*(cv.width/r.width), (e.clientY-r.top)*(cv.height/r.height) ];
+}
+cv.addEventListener("wheel", e=>{
+  e.preventDefault();
+  const [px,py]=canvasPx(e);
+  zoomAt(px, py, e.deltaY>0 ? 1.18 : 1/1.18);
+  renderUI();
+}, {passive:false});
+cv.addEventListener("mousedown", e=>{
+  const [px,py]=canvasPx(e);
+  _drag={ x0:px, y0:py, lon0:VIEW.lonMin, lat0:VIEW.latMin, moved:false };
+});
+window.addEventListener("mousemove", e=>{
+  if(!_drag) return;
+  const [px,py]=canvasPx(e);
+  if(Math.hypot(px-_drag.x0, py-_drag.y0) < DRAG_THRESHOLD_PX) return;
+  _drag.moved=true; cv.style.cursor="grabbing";
+  const spanLon=VIEW.lonMax-VIEW.lonMin, spanLat=VIEW.latMax-VIEW.latMin;
+  VIEW.lonMin=_drag.lon0 - (px-_drag.x0)/cv.width*spanLon; VIEW.lonMax=VIEW.lonMin+spanLon;
+  VIEW.latMin=_drag.lat0 + (py-_drag.y0)/cv.height*spanLat; VIEW.latMax=VIEW.latMin+spanLat;
+  clampView(); _bathy=null; renderUI();
+});
+window.addEventListener("mouseup", ()=>{
+  if(_drag) cv.style.cursor="";
+  setTimeout(()=>{ _drag=null; }, 0); // let the click handler below see `moved`
+});
+document.getElementById("fitbtn").addEventListener("click", ()=>{ fitView(); renderUI(); });
+
+cv.addEventListener("click", e=>{
+  if(_drag && _drag.moved) return; // that was a pan, not a pin placement
+  if(!CUSTOM.arm) return;
+  const [px,py]=canvasPx(e);
+  const lon=invX(px), lat=invY(py);
   CUSTOM[CUSTOM.arm] = { lat_deg: Math.round(lat*1e4)/1e4, lon_deg: Math.round(lon*1e4)/1e4 };
   // Mode stays armed — click again to adjust; press the button (or place
   // the other end) to finish. Disarming after one click made repeat
@@ -1335,7 +1402,8 @@ document.getElementById("packsel").addEventListener("change", async e=>{
   ACTIVE_PACK_ID = e.target.value;
   const p = activePack();
   MIDLAT = p.midlat; KLON = Math.cos(MIDLAT*D2R);
-  Object.assign(MAP, p.map);           // X()/Y() read MAP live
+  Object.assign(MAP, p.map);           // pack bbox = the widest allowed view
+  fitView();                            // start each region fitted to its whole bbox
   _bathy = null;                        // rebuild background for the new region
   window._sel = 0; window._lastSig = null; window._res = null;
   document.getElementById("routeline").innerHTML = p.routeHTML;
