@@ -64,6 +64,12 @@
   .endbtns button.arm{border-color:var(--gold); color:var(--gold);}
   .endbtns button:disabled{opacity:.4; cursor:default;}
   #map.picking{cursor:crosshair;}
+  .zoomctl{position:absolute; top:12px; right:12px; display:flex; flex-direction:column; align-items:center; gap:6px;
+    background:rgba(14,17,45,.72); border:1px solid var(--line); border-radius:9px; padding:7px 5px;}
+  .zoomctl button{width:26px; height:26px; border:1px solid var(--line); background:var(--panel2); color:var(--txt);
+    border-radius:6px; font-size:16px; line-height:1; cursor:pointer;}
+  .zoomctl button:hover{border-color:var(--acc);}
+  .zoomctl input[type=range]{writing-mode:vertical-lr; direction:rtl; width:6px; height:96px; accent-color:var(--acc); cursor:pointer;}
   .presets{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px;}
   .presets button{background:var(--panel2); color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:8px 6px; font-size:12px; cursor:pointer;}
   .presets button.on{border-color:var(--acc); color:var(--acc); background:#0f2536;}
@@ -150,6 +156,9 @@
       <button id="setdest">Set destination</button>
       <button id="resetends" disabled>Reset</button>
     </div>
+    <div class="endbtns plan-only" style="grid-template-columns:1fr;">
+      <button id="setvia">＋ Add via waypoint</button>
+    </div>
     <div class="conf plan-only" id="endslab" style="display:none; margin-bottom:8px;"></div>
     <div class="endbtns plan-only" style="grid-template-columns:1.4fr auto auto;">
       <select id="favsel" style="font-size:12px;"><option value="">Favourites…</option></select>
@@ -179,11 +188,11 @@
       <button data-p="delivery">Delivery</button>
     </div>
     <div class="slider">
-      <label><span><b>Economy</b></span><span><b>Schedule</b></span></label>
-      <input type="range" id="w_econ" min="0" max="100" value="70">
+      <label><span><b>Economy</b></span></label>
+      <input type="range" id="w_econ" min="0" max="100" value="30">
     </div>
     <div class="slider">
-      <label><span><b>Crew transit</b></span><span><b>Owner aboard</b></span></label>
+      <label><span><b>Comfort</b></span></label>
       <input type="range" id="w_comf" min="0" max="100" value="30">
     </div>
     <div class="conf" style="margin-top:8px;" title="Engineer-set limits (max continuous load, slamming avoidance) are applied under every plan; wear appears as an output on each plan card.">
@@ -242,7 +251,14 @@
           <option value="caribbean">Caribbean</option>
         </select>
       </div>
-      <canvas id="map" width="860" height="640"></canvas>
+      <div style="position:relative;">
+        <canvas id="map" width="860" height="640" style="cursor:grab;"></canvas>
+        <div class="zoomctl">
+          <button id="zoomin" title="Zoom in">+</button>
+          <input id="zoomsl" type="range" min="0" max="100" value="0" orient="vertical" title="Zoom">
+          <button id="zoomout" title="Zoom out">−</button>
+        </div>
+      </div>
       <div class="maprow">
         <span style="white-space:nowrap; font-variant-numeric:tabular-nums;"><span id="tlab">08:00 · +0h</span></span>
         <input type="range" id="tscrub" min="0" max="30" value="0">
@@ -515,7 +531,7 @@ async function loadPackLand(){
   const p = activePack();
   if(!p.landURL){ ACTIVE_LAND = LAND; return; }
   if(!p._land){
-    try{ p._land = (await (await fetch(p.landURL)).json()).polygons; }
+    try{ p._land = (await (await fetch(p.landURL+"?v=2")).json()).polygons; }
     catch(err){ p._land = []; console.error("coastline load failed", p.landURL, err); }
   }
   ACTIVE_LAND = p._land;
@@ -687,6 +703,24 @@ function drawEndpointMarks(){
     ctx.fillStyle="#1c3550"; ctx.font="bold 11px sans-serif"; ctx.fillText(p.name, X(p.lon)+8, Y(p.lat)+4);
     ctx.globalAlpha = 1;
   }
+  // via waypoints — numbered gold pins, plus a dashed setup line through the
+  // full sequence (only before a plan exists; the real stitched route replaces it)
+  if(window.CUSTOM && CUSTOM.via.length){
+    if(!window._res){
+      const seq=[ CUSTOM.origin||activePack().portMarks[0]&&{lat_deg:activePack().portMarks[0].lat,lon_deg:activePack().portMarks[0].lon},
+                  ...CUSTOM.via,
+                  CUSTOM.destination||activePack().portMarks[1]&&{lat_deg:activePack().portMarks[1].lat,lon_deg:activePack().portMarks[1].lon} ].filter(Boolean);
+      ctx.setLineDash([4,5]); ctx.strokeStyle="rgba(231,185,53,.6)"; ctx.lineWidth=1.5;
+      ctx.beginPath(); seq.forEach((c,i)=> i?ctx.lineTo(X(c.lon_deg),Y(c.lat_deg)):ctx.moveTo(X(c.lon_deg),Y(c.lat_deg))); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    CUSTOM.via.forEach((c,i)=>{
+      const x=X(c.lon_deg), y=Y(c.lat_deg);
+      ctx.fillStyle="#e7b935"; ctx.beginPath(); ctx.arc(x,y,7,0,7); ctx.fill();
+      ctx.fillStyle="#0E1138"; ctx.font="bold 10px sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText(String(i+1), x, y+0.5); ctx.textAlign="left"; ctx.textBaseline="alphabetic";
+    });
+  }
   // custom endpoint pins (chart picks) — brand teal ring + label
   if(window.CUSTOM){
     for(const [key,label] of [["origin","ORIGIN"],["destination","DEST"]]){
@@ -699,10 +733,49 @@ function drawEndpointMarks(){
     }
   }
 }
+/* ---------- Synchronous full-chart redraw (pan/zoom use this — NO network) ----------
+   The weather field for the current hour is fetched once (by renderUI) and
+   held in window._wxCurrent; pan/zoom/zoom-slider just repaint from it, so
+   dragging is instant instead of firing an ETag round-trip per frame. */
+function drawChart(){
+  const res = window._res, t = +document.getElementById("tscrub").value;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  paintWx(window._wxCurrent || null);
+  drawGraticule();
+  drawLand(); drawChartOverlays();
+  if(res) drawRoutes(res, window._sel||0, t); else drawEndpointMarks();
+}
+/* ---------- Graticule: faint lat/lon grid + edge labels ----------
+   Restores nautical-chart character the per-pack flat-sea packs lost, at
+   any zoom — the grid spacing steps sensibly with the visible span. */
+function drawGraticule(){
+  const spanDeg = VIEW.lonMax-VIEW.lonMin;
+  const step = spanDeg>20?5 : spanDeg>8?2 : spanDeg>3?1 : spanDeg>1.2?0.5 : spanDeg>0.5?0.25 : 0.1;
+  const fmt=v=>{ const a=Math.abs(v); return (step<1? a.toFixed(step<0.5?2:1) : a.toFixed(0)); };
+  ctx.save();
+  ctx.strokeStyle="rgba(60,90,120,.28)"; ctx.lineWidth=1;
+  ctx.fillStyle="rgba(40,70,100,.75)"; ctx.font="9px sans-serif";
+  const lon0=Math.ceil(VIEW.lonMin/step)*step;
+  for(let lo=lon0; lo<=VIEW.lonMax; lo+=step){
+    const x=X(lo); ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,cv.height); ctx.stroke();
+    ctx.fillText(`${fmt(lo)}°${lo>=0?"E":"W"}`, x+3, cv.height-4);
+  }
+  const lat0=Math.ceil(VIEW.latMin/step)*step;
+  for(let la=lat0; la<=VIEW.latMax; la+=step){
+    const y=Y(la); ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(cv.width,y); ctx.stroke();
+    ctx.fillText(`${fmt(la)}°${la>=0?"N":"S"}`, 3, y-3);
+  }
+  ctx.restore();
+}
 function fmtH(h){ const H=Math.floor(h), M=Math.round((h-H)*60); return `${H}h${String(M).padStart(2,"0")}`; }
 function eta(h){ const dep=8*60, m=(dep+h*60)%1440, d=Math.floor((dep+h*60)/1440);
   return `${String(Math.floor(m/60)).padStart(2,"0")}:${String(Math.round(m%60)).padStart(2,"0")}${d?" +1d":""}`; }
 function why(r,base,res){
+  if(r.legs){ // multi-leg via-waypoint passage
+    return `${r.legs.length} consecutive legs, each independently optimised: `
+      + r.legs.map((l,i)=>`leg ${i+1} ${Math.round(l.dist)}nm/${l.v}kn`).join(", ")
+      + ". Not a single jointly-optimised route — the demo plans each leg separately.";
+  }
   const parts=[];
   if(r.side==="E"&&base.maxHs>2) parts.push(`routes east of Corsica to keep ${base.maxHs.toFixed(1)}m seas in the lee`);
   if(r.side==="W"&&r.maxHs<1.5) parts.push("takes the direct strait route in light conditions");
@@ -724,7 +797,12 @@ function why(r,base,res){
 let VESSEL_CO2_PER_KG = null;
 let _reqGen = 0, _drawGen = 0;
 
-function econVal(){ return +document.getElementById("w_econ").value; }
+// Both sliders: label on the left, sliding RIGHT = more of that objective.
+// econVal returns the API's `pace` (0=economy … 100=schedule), so more
+// economy = lower pace → invert the slider position.
+function econVal(){ return 100 - (+document.getElementById("w_econ").value); }
+// comfVal returns the API's `comfort` (0=crew transit … 100=owner aboard),
+// where more comfort = higher value — so sliding right maps directly.
 function comfVal(){ return +document.getElementById("w_comf").value; }
 function latestHVal(){ const ab=document.getElementById("arriveby").value; return ab? +ab : null; }
 
@@ -786,11 +864,59 @@ function showError(err){
   wrap.prepend(warn);
 }
 
+/* ---------- Multi-leg passage (via waypoints) ----------
+   Honest orchestration of the single-endpoint API: plan origin→via1→…→dest
+   as N consecutive, independently-optimised legs (taking each leg's own
+   recommended candidate A), then stitch into one passage. NOT a jointly-
+   optimised route — each leg picks its own speed/engine — and the demo
+   labels it as such. Zero core/API changes. */
+async function optimiseMultiLeg(econ, comf, onSlow){
+  const p=activePack();
+  const o = (CUSTOM.origin)||p.origin||{lat_deg:p.portMarks[0].lat,lon_deg:p.portMarks[0].lon};
+  const d = (CUSTOM.destination)||p.destination||{lat_deg:p.portMarks[1].lat,lon_deg:p.portMarks[1].lon};
+  const pts=[o, ...CUSTOM.via, d];
+  const legs=[];
+  for(let i=0;i<pts.length-1;i++){
+    showLoading(true, `Optimising leg ${i+1} of ${pts.length-1}…`);
+    const body={ pace:econ, comfort:comf, latest_arrival_h:null, pack_id:p.pack_id, origin:pts[i], destination:pts[i+1] };
+    const sub = await apiFetch("POST","/v1/plans", body);
+    const hard=Date.now()+300_000; let leg=null;
+    while(Date.now()<hard){
+      const rec = await apiFetch("GET",`/v1/plans/${sub.job_id}`);
+      if(rec.status==="done"){ leg=mapPlanResult(rec.result, null); break; }
+      if(rec.status==="failed") throw new ApiError("job_failed", `leg ${i+1}: ${rec.error?.message ?? "planning failed"}`);
+      await sleep(1500);
+    }
+    if(!leg) throw new ApiError("timeout","a leg took too long — try fewer waypoints or a smaller region.");
+    legs.push(Object.assign({}, leg.plans[0], {__baseline: leg.baseline})); // each leg's own recommended candidate + its baseline
+  }
+  // stitch: concatenate tracks (dropping the duplicated join point), sum totals
+  let track=[...legs[0].track];
+  for(let i=1;i<legs.length;i++) track=track.concat(legs[i].track.slice(1));
+  const sum=k=>legs.reduce((a,l)=>a+l[k],0);
+  const combined={
+    t:sum("t"), fuel:sum("fuel"), dist:sum("dist"), maxHs:Math.max(...legs.map(l=>l.maxHs)),
+    comfort:legs.reduce((a,l)=>a+l.comfort*l.t,0)/sum("t"),   // duration-weighted
+    wear:legs.reduce((a,l)=>a+l.wear*l.t,0)/sum("t"),
+    v:Math.round(sum("dist")/sum("t")*10)/10, oneEngine:false, side:null, track,
+    corr:`Via ${CUSTOM.via.length} waypoint${CUSTOM.via.length>1?"s":""}`,
+    score:legs.reduce((a,l)=>a+(l.score||0),0), legs,
+  };
+  // baseline = summed per-leg baselines (each leg's own do-nothing reference)
+  const base={ t:legs.reduce((a,l)=>a+l.__baseline.t,0), fuel:legs.reduce((a,l)=>a+l.__baseline.fuel,0),
+    maxHs:Math.max(...legs.map(l=>l.__baseline.maxHs)), comfort:1, wear:1, track:[], score:NaN };
+  return { plans:[combined], baseline:base, missedWindow:false, latestH:null,
+    comfRef:Math.max(combined.comfort,1), wearRef:Math.max(combined.wear,1), multiLeg:true };
+}
+
 async function requestPlan(){
   const myGen = ++_reqGen;
   showLoading(true);
   try{
-    const res = await optimise(econVal(), comfVal(), latestHVal(), ()=>{
+    const useVia = window.CUSTOM && CUSTOM.via.length>0;
+    const res = useVia
+      ? await optimiseMultiLeg(econVal(), comfVal())
+      : await optimise(econVal(), comfVal(), latestHVal(), ()=>{
       if(myGen===_reqGen) showLoading(true, "Still computing — this passage is taking longer than usual, still waiting…");
     });
     if(myGen!==_reqGen) return; // superseded by a newer request -- drop silently
@@ -845,8 +971,8 @@ async function renderUI(){
     document.getElementById("tlab").textContent=`${String(Math.floor((8+t)%24)).padStart(2,"0")}:00 · +${t}h`;
     const field = await fetchWeatherField(t);
     if(myGen!==_drawGen) return;
-    ctx.clearRect(0,0,cv.width,cv.height);
-    paintWx(field); drawLand(); drawChartOverlays(); drawEndpointMarks();
+    window._wxCurrent = field;
+    drawChart();
     const sb=document.getElementById("startbtn");
     sb.textContent="BEGIN PASSAGE"; sb.disabled=true; sb.style.opacity=0.4;
     return;
@@ -859,9 +985,8 @@ async function renderUI(){
   // flash on every scrub-drag tick. All painting below is synchronous.
   const field = await fetchWeatherField(t);
   if(myGen!==_drawGen) return; // superseded by a newer scrub/render before the weather fetch resolved
-  ctx.clearRect(0,0,cv.width,cv.height);
-  paintWx(field);
-  drawLand(); drawChartOverlays(); drawRoutes(res,window._sel||0,t);
+  window._wxCurrent = field;
+  drawChart();
   const B=res.baseline, wrap=document.getElementById("plans"); wrap.innerHTML="";
   if(res.missedWindow){
     const warn=document.createElement("div");
@@ -883,7 +1008,7 @@ async function renderUI(){
       const dF=r.fuel-act.fuel, dT=r.t-act.t, cI=idx10(r.comfort,res.comfRef);
       const el=document.createElement("div"); el.className="alt";
       el.innerHTML=`<div class="altline"><span class="dot" style="background:${COLORS[i]}"></span><b>${"ABC"[i]}</b> — ${r.corr} · ${r.v} kn${r.oneEngine?" · single engine":""}<span class="switch">SWITCH →</span></div>
-        <div class="altstats"><span class="${dF<=0?"delta-good":"delta-bad"}">${dF>0?"+":"−"}${Math.abs(Math.round(dF)).toLocaleString()} kg fuel</span> · ETA ${eta(r.t)} <span class="${dT<=0?"delta-good":"delta-bad"}">(${dT>0?"+":"−"}${fmtH(Math.abs(dT))})</span> · comfort ${cI.toFixed(1)}/10</div>`;
+        <div class="altstats"><span class="${dF<=0?"delta-good":"delta-bad"}">${dF>0?"+":"−"}${Math.abs(Math.round(dF)).toLocaleString()} kg fuel</span> · ETA ${eta(r.t)} <span class="${dT<=0?"delta-good":"delta-bad"}">(${dT>0?"+":"−"}${fmtH(Math.abs(dT))})</span> · comfort ${(10-cI).toFixed(1)}/10</div>`;
       el.onclick=()=>{
         window._sel=i;
         chatPush("ai",`<b>Switched to Plan ${"ABC"[i]}</b> — ${r.corr} at ${r.v} kn, ETA ${eta(r.t)}. Setpoints updated on the vessel display.`);
@@ -909,8 +1034,8 @@ async function renderUI(){
           <span class="hk">ETA</span>
         </div>
         <div class="h">
-          <span class="hv">${cI.toFixed(1)}<small>/10</small></span>
-          <span class="hd"><span class="bar"><i style="width:${cI*10}%;background:${cI<4?"var(--good)":cI<7?"var(--warn)":"var(--bad)"}"></i></span></span>
+          <span class="hv">${(10-cI).toFixed(1)}<small>/10</small></span>
+          <span class="hd"><span class="bar"><i style="width:${(10-cI)*10}%;background:${(10-cI)>=6?"var(--good)":(10-cI)>=3?"var(--warn)":"var(--bad)"}"></i></span></span>
           <span class="hk">Comfort</span>
         </div>
       </div>
@@ -1222,7 +1347,7 @@ document.getElementById("presets").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b) return;
   document.querySelectorAll("#presets button").forEach(x=>x.classList.remove("on")); b.classList.add("on");
   const p=PRESETS[b.dataset.p];
-  document.getElementById("w_econ").value=p.econ; document.getElementById("w_comf").value=p.comf;
+  document.getElementById("w_econ").value=100-p.econ; document.getElementById("w_comf").value=p.comf;
   markDirty();
 });
 /* Explicit-calculate flow: setting changes mark the plan stale; nothing
@@ -1259,7 +1384,7 @@ function setMode(m){
   renderUI();
 }
 /* ---------- Custom endpoints: click the chart to set origin/destination ---------- */
-window.CUSTOM = { origin:null, destination:null, arm:null };
+window.CUSTOM = { origin:null, destination:null, via:[], arm:null };
 function fmtCoord(c){
   const ns = c.lat_deg>=0?"N":"S", ew = c.lon_deg>=0?"E":"W";
   return `${Math.abs(c.lat_deg).toFixed(3)}°${ns} ${Math.abs(c.lon_deg).toFixed(3)}°${ew}`;
@@ -1271,12 +1396,20 @@ function updateEndsUI(){
   dBtn.classList.toggle("arm", CUSTOM.arm==="destination");
   oBtn.textContent = CUSTOM.origin ? "Origin: custom" : "Set origin";
   dBtn.textContent = CUSTOM.destination ? "Dest: custom" : "Set destination";
-  document.getElementById("resetends").disabled = !(CUSTOM.origin||CUSTOM.destination);
+  const nvia=CUSTOM.via.length;
+  const viaBtn=document.getElementById("setvia");
+  viaBtn.classList.toggle("arm", CUSTOM.arm==="via");
+  viaBtn.textContent = nvia ? `＋ Add via waypoint (${nvia} set · click to clear)` : "＋ Add via waypoint";
+  document.getElementById("resetends").disabled = !(CUSTOM.origin||CUSTOM.destination||nvia);
   cv.classList.toggle("picking", !!CUSTOM.arm);
   const lab=document.getElementById("endslab");
-  if(CUSTOM.arm){
+  if(CUSTOM.arm==="via"){
+    lab.style.display=""; lab.textContent="Click the chart to drop a via waypoint the route must pass through.";
+  } else if(CUSTOM.arm){
     lab.style.display="";
     lab.textContent=`Click the chart to place the ${CUSTOM.arm==="origin"?"origin":"destination"} — click again to adjust, press the button to finish.`;
+  } else if(nvia){
+    lab.style.display=""; lab.textContent=`Passage via ${nvia} waypoint${nvia>1?"s":""} — planned as ${nvia+1} consecutive legs, each independently optimised.`;
   } else if(CUSTOM.origin||CUSTOM.destination){
     lab.style.display=""; lab.textContent="Custom passage — server-validated against real geography.";
   } else lab.style.display="none";
@@ -1299,6 +1432,11 @@ for(const [id,which] of [["setorig","origin"],["setdest","destination"]])
     CUSTOM.arm = CUSTOM.arm===which ? null : which; // toggle
     updateEndsUI();
   });
+document.getElementById("setvia").addEventListener("click", ()=>{
+  if(CUSTOM.via.length){ CUSTOM.via=[]; CUSTOM.arm=null; updateEndsUI(); renderUI(); markDirty(); return; } // click again to clear
+  CUSTOM.arm = CUSTOM.arm==="via" ? null : "via";
+  updateEndsUI();
+});
 
 /* ---------- Favourites: named places via the real /v1/favourites API ---------- */
 const FAV_VESSEL = "demo";
@@ -1344,7 +1482,7 @@ document.getElementById("saveorig").addEventListener("click", ()=>saveFav("origi
 document.getElementById("savedest").addEventListener("click", ()=>saveFav("destination"));
 loadFavourites();
 document.getElementById("resetends").addEventListener("click", ()=>{
-  window.CUSTOM = { origin:null, destination:null, arm:null };
+  window.CUSTOM = { origin:null, destination:null, via:[], arm:null };
   updateEndsUI(); renderUI(); markDirty();
 });
 /* ---------- Chart navigation: wheel zoom, drag pan ----------
@@ -1359,9 +1497,30 @@ function canvasPx(e){
 cv.addEventListener("wheel", e=>{
   e.preventDefault();
   const [px,py]=canvasPx(e);
-  zoomAt(px, py, e.deltaY>0 ? 1.18 : 1/1.18);
-  renderUI();
+  zoomAt(px, py, e.deltaY>0 ? 1.12 : 1/1.12);
+  syncZoomSlider(); drawChart();  // synchronous — no network, no lag
 }, {passive:false});
+/* zoom level <-> slider: 0 = fitted to pack bbox, 1 = tightest (MIN_SPAN_NM),
+   log-scaled so each slider step is a constant zoom ratio. */
+function currentZoomFrac(){
+  const fit=MAP.lonMax-MAP.lonMin, cur=VIEW.lonMax-VIEW.lonMin;
+  const midLat=(VIEW.latMin+VIEW.latMax)/2, minSpan=MIN_SPAN_NM/(60*Math.cos(midLat*D2R));
+  if(cur>=fit) return 0; if(cur<=minSpan) return 1;
+  return Math.log(fit/cur)/Math.log(fit/minSpan);
+}
+function syncZoomSlider(){ const z=document.getElementById("zoomsl"); if(z) z.value=Math.round(currentZoomFrac()*100); }
+function applyZoomFrac(frac){
+  const fit=MAP.lonMax-MAP.lonMin;
+  const midLat=(VIEW.latMin+VIEW.latMax)/2, minSpan=MIN_SPAN_NM/(60*Math.cos(midLat*D2R));
+  const targetSpanLon = fit*Math.pow(minSpan/fit, frac);
+  // zoom about the current view centre
+  const cx=cv.width/2, cy=cv.height/2, cur=VIEW.lonMax-VIEW.lonMin;
+  zoomAt(cx, cy, targetSpanLon/cur);
+  drawChart();
+}
+document.getElementById("zoomsl").addEventListener("input", e=>applyZoomFrac(+e.target.value/100));
+document.getElementById("zoomin").addEventListener("click", ()=>{ zoomAt(cv.width/2,cv.height/2,1/1.4); syncZoomSlider(); drawChart(); });
+document.getElementById("zoomout").addEventListener("click", ()=>{ zoomAt(cv.width/2,cv.height/2,1.4); syncZoomSlider(); drawChart(); });
 cv.addEventListener("mousedown", e=>{
   const [px,py]=canvasPx(e);
   _drag={ x0:px, y0:py, lon0:VIEW.lonMin, lat0:VIEW.latMin, moved:false };
@@ -1374,20 +1533,22 @@ window.addEventListener("mousemove", e=>{
   const spanLon=VIEW.lonMax-VIEW.lonMin, spanLat=VIEW.latMax-VIEW.latMin;
   VIEW.lonMin=_drag.lon0 - (px-_drag.x0)/cv.width*spanLon; VIEW.lonMax=VIEW.lonMin+spanLon;
   VIEW.latMin=_drag.lat0 + (py-_drag.y0)/cv.height*spanLat; VIEW.latMax=VIEW.latMin+spanLat;
-  clampView(); _bathy=null; renderUI();
+  clampView(); _bathy=null; drawChart();  // synchronous pan — instant
 });
 window.addEventListener("mouseup", ()=>{
   if(_drag) cv.style.cursor="";
   setTimeout(()=>{ _drag=null; }, 0); // let the click handler below see `moved`
 });
-document.getElementById("fitbtn").addEventListener("click", ()=>{ fitView(); renderUI(); });
+document.getElementById("fitbtn").addEventListener("click", ()=>{ fitView(); syncZoomSlider(); drawChart(); });
 
 cv.addEventListener("click", e=>{
   if(_drag && _drag.moved) return; // that was a pan, not a pin placement
   if(!CUSTOM.arm) return;
   const [px,py]=canvasPx(e);
   const lon=invX(px), lat=invY(py);
-  CUSTOM[CUSTOM.arm] = { lat_deg: Math.round(lat*1e4)/1e4, lon_deg: Math.round(lon*1e4)/1e4 };
+  const pt = { lat_deg: Math.round(lat*1e4)/1e4, lon_deg: Math.round(lon*1e4)/1e4 };
+  if(CUSTOM.arm==="via"){ CUSTOM.via.push(pt); CUSTOM.arm=null; updateEndsUI(); renderUI(); markDirty(); return; }
+  CUSTOM[CUSTOM.arm] = pt;
   // Mode stays armed — click again to adjust; press the button (or place
   // the other end) to finish. Disarming after one click made repeat
   // adjustments silently do nothing, which read as "the pin won't stick".
@@ -1397,7 +1558,7 @@ cv.addEventListener("click", e=>{
                   // pick comes back as a clear invalid_request message then
 });
 document.getElementById("packsel").addEventListener("change", async e=>{
-  window.CUSTOM = { origin:null, destination:null, arm:null };
+  window.CUSTOM = { origin:null, destination:null, via:[], arm:null };
   updateEndsUI();
   ACTIVE_PACK_ID = e.target.value;
   const p = activePack();
